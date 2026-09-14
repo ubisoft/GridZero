@@ -1,0 +1,52 @@
+# GridZero Core — line-ending policy
+# Critical for cross-platform CI: shell scripts and Dockerfile MUST be LF on
+# Linux runners (otherwise the shebang resolves to "bash^M: bad interpreter").
+
+* text=auto
+
+# Shell scripts (executed by Linux CI and dev container)
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# Build / CI infrastructure (Linux-targeted)
+Dockerfile*         text eol=lf
+docker/**           text eol=lf
+.gitlab-ci.yml      text eol=lf
+.devcontainer/**    text eol=lf
+
+# Rust + Cargo (canonical LF)
+*.rs       text eol=lf
+Cargo.toml text eol=lf
+Cargo.lock text eol=lf
+
+# CMake (cross-platform, but LF avoids subtle issues with cmake -P)
+CMakeLists.txt text eol=lf
+*.cmake        text eol=lf
+
+# C / C++ source — LF for portability
+*.c   text eol=lf
+*.cc  text eol=lf
+*.cpp text eol=lf
+*.h   text eol=lf
+*.hpp text eol=lf
+*.inl text eol=lf
+
+# Treat WebAssembly bytecode as binary (just in case any .wasm slips into the tree)
+*.wasm binary
+*.wat  text eol=lf
+*.wast text eol=lf
+
+# Bootstrap and build scripts — LF (executed on Linux)
+bootstrap_deps.sh text eol=lf
+rebuild_and_test.sh text eol=lf
+
+# Markdown is plain text, LF is standard
+*.md text eol=lf
+
+# Sharpmake build scripts — C# files, consumed by dotnet on Windows
+# CRLF on checkout so VS2019 editor is happy; git stores LF canonically
+*.cs          text eol=crlf
+*.sharpmake   text eol=crlf
+
+# JSON config and schema files — LF (consumed by Python scripts and Linux tooling)
+*.json        text eol=lf

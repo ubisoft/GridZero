@@ -1,0 +1,34 @@
+build/
+out/
+.vs/
+.idea/
+.vscode/
+compile_commands.json
+*.user
+*.suo
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+_deps/
+
+# Cargo / Rust artifacts produced by the WASM guest builds
+**/cargo_target/
+**/target/
+**/Cargo.lock.bak
+
+# WebAssembly build outputs (compiled next to test runners)
+**/*.wasm.tmp
+
+# macOS junk (kept here in case anyone develops on macOS)
+.DS_Store
+**/.DS_Store
+
+# Local environment
+.env
+.env.local
+
+# External deps vendored by bootstrap_deps.sh
+external/
+
+# Sharpmake generated files
+generated/

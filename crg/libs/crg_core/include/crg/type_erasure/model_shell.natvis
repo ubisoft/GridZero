@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    CRG ModelShell natvis — Visual Studio debugger visualizer.
+
+    Mirrors the structure of model_shell.hpp:
+      ModelShell<TDomain>          — fixed-size buffer wrapper; m_Concept is null when empty.
+      ModelShell<TDomain>::ModelWrapper<TModel>
+                                   — concrete inner type; m_Instance is the payload.
+
+    Template parameter numbering (MSVC natvis, sequential across all wildcards):
+      ModelShell<*>                 $T1 = TDomain
+      ModelShell<*>::ModelWrapper<*>  $T1 = TDomain  $T2 = TModel
+-->
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+
+    <!-- ── Outer shell ──────────────────────────────────────────────────────── -->
+    <Type Name="crg::shell::ModelShell&lt;*&gt;">
+        <DisplayString Condition="m_Concept == nullptr">[empty ModelShell&lt;{$T1}&gt;]</DisplayString>
+        <DisplayString Condition="m_Concept != nullptr">{*m_Concept}</DisplayString>
+        <Expand>
+            <Item Name="[empty]"   Condition="m_Concept == nullptr">true</Item>
+            <ExpandedItem          Condition="m_Concept != nullptr">m_Concept</ExpandedItem>
+        </Expand>
+    </Type>
+
+    <!-- ── Inner wrapper — shows concrete model type name + expands payload ── -->
+    <Type Name="crg::shell::ModelShell&lt;*&gt;::ModelWrapper&lt;*&gt;">
+        <DisplayString>{"$T2", sb} = {m_Instance}</DisplayString>
+        <Expand>
+            <Item Name="[type]">"$T2", sb</Item>
+            <ExpandedItem>m_Instance</ExpandedItem>
+        </Expand>
+    </Type>
+
+</AutoVisualizer>
