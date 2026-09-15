@@ -1,8 +1,10 @@
 # GridZero - Capability Routing Grid (CRG)
 
 > Companion code to "Capability Routing Grid - From Decoupled Plugins to the
-> Hardware Ceiling", Cyril Tissier's talk at CppCon 2026. Slides and recording
-> will be linked here once available.
+> Hardware Ceiling", Cyril Tissier's talk at CppCon 2026. Recording will be
+> linked here once available.
+
+[Slides for the talk at CppCon2026](doc/crg_talk_en.pptx)
 
 GridZero is a C++17 header-only toolkit for composing decoupled code across
 strictly segregated projects. `NodeLink` lets implementations register
