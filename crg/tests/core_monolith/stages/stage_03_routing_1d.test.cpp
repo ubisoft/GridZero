@@ -19,6 +19,10 @@
 //   per coordinate. The primary template is the default; partial specializations
 //   on At<SomeValue> override specific cells.
 //
+//   Routing is shape-agnostic — this stage routes a virtual (Brain) contract,
+//   same as Stage 02. Find() resolves to a cell regardless of what shape the
+//   capability at that cell is.
+//
 // WHEN TO USE:
 //   - One context dimension drives behavior (difficulty, quality preset, etc.)
 //   - The set of values is known at compile time (bounded enum)
@@ -55,13 +59,14 @@ namespace crg {
     template<> struct EnumTraits<Difficulty03> { static constexpr std::size_t Count = 2; };
 }
 
-// ─── Contract ─────────────────────────────────────────────────────────────────
+// ─── Contract: Brain (virtual), same shape as Stage 02 ────────────────────────
 struct IMove03 {
-    struct Params { float m_Speed{ 0.f }; };
+    virtual void Move(float& outSpeed) const = 0;
+    virtual ~IMove03() = default;
 };
 
 // ─── Routing traits: 1D tensor on Difficulty03 ────────────────────────────────
-//   Without this specialization the default is CapabilitySpace<> (0D, Stage 02).
+//   Without this specialization the default is CapabilitySpace<> (0D).
 namespace crg::routing {
     template<> struct CapabilityRoutingTraits<S03Domain, IMove03> {
         using SpaceType = CapabilitySpace<Difficulty03>;
@@ -71,7 +76,7 @@ namespace crg::routing {
 // ─── Capability: primary template = default cell (Easy) ───────────────────────
 template<typename TModel, typename TAt>
 struct DifficultyMove : public Capability<IMove03> {
-    static void Execute(IMove03::Params& p) { p.m_Speed = 1.0f; }
+    void Move(float& outSpeed) const override { outSpeed = 1.0f; }
 };
 
 // ─── Partial specialization: override the Hard cell ───────────────────────────
@@ -79,7 +84,7 @@ struct DifficultyMove : public Capability<IMove03> {
 //   The binding system instantiates this specialization for index 1 of the tensor.
 template<typename TModel>
 struct DifficultyMove<TModel, At<Difficulty03::Hard>> : public Capability<IMove03> {
-    static void Execute(IMove03::Params& p) { p.m_Speed = 3.0f; }
+    void Move(float& outSpeed) const override { outSpeed = 3.0f; }
 };
 
 namespace {
@@ -103,10 +108,10 @@ TEST_CASE("Stage 03 — Different axis values route to different cells", "[stage
     REQUIRE(gEasy);
     REQUIRE(gHard);
 
-    IMove03::Params easy, hard;
-    gEasy(easy);
-    gHard(hard);
+    float easy = 0.f, hard = 0.f;
+    gEasy->Move(easy);
+    gHard->Move(hard);
 
-    REQUIRE(easy.m_Speed == 1.0f); // primary template
-    REQUIRE(hard.m_Speed == 3.0f); // partial specialization
+    REQUIRE(easy == 1.0f); // primary template
+    REQUIRE(hard == 3.0f); // partial specialization
 }

@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 License. See LICENSE.md in the project root for license information.
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STAGE FFI TRAMPOLINE — The C-ABI proof: where multi-language interop lives
+// STAGE 08 — FFI Trampoline: the C-ABI Proof
 // ─────────────────────────────────────────────────────────────────────────────
 // CLAIM TO VERIFY (CppCon Act I slide 1.8):
 //   "ABI-neutrality emerges from decoupling — Rust/WASM could self-register."
@@ -11,7 +11,7 @@
 //   NodeLink self-registration requires C++ CRTP + static_cast<TNode*>(this).
 //   A Rust or WASM module cannot call a C++ constructor.
 //
-// WHERE IT IS TRUE: the Muscle DOD path (Act IV).
+// WHERE IT IS TRUE: the Muscle DOD path (Act IV, Stage 07).
 //   A DOD contract is: struct IFoo { struct Params { ... }; };
 //   Its capability reduces to: void (*)(IFoo::Params&) — a plain C function pointer.
 //   Any language that can export a C function can inject into this slot.
@@ -27,6 +27,13 @@
 // NARRATIVE CONSEQUENCE:
 //   - Act I reward = C++ binary stability (MSVC ↔ Clang), not multi-language.
 //   - Act IV reward = pure C-ABI, true multi-language by structural consequence.
+//
+// WHAT'S NEW vs Stage 07:
+//   - Same Muscle contract shape as Stage 07 (no virtual, Params, single Execute).
+//   - A plain C function pointer (standing in for a Rust/WASM export) fills the
+//     CapabilityHandle slot directly, bypassing the router.
+//   - NodeLink's C++-only registration path is checked as the boundary that does
+//     NOT extend to foreign code — the contrast that makes the Muscle result matter.
 // ═════════════════════════════════════════════════════════════════════════════
 
 #include "catch.hpp"
@@ -51,7 +58,7 @@ struct ILog {
 
 // ─── 1. Contract classification at compile time ───────────────────────────────
 
-TEST_CASE("FFI: IsStaticContract is true for plain struct with Params (no virtual)", "[ffi][abi]") {
+TEST_CASE("Stage 08 — IsStaticContract is true for plain struct with Params (no virtual)", "[stage08][ffi]") {
     // A Muscle contract has no virtual methods → its capability is a raw fn ptr.
     // This is the structural invariant that makes C-ABI possible at Act IV.
     static_assert(crg::capabilities::IsStaticContract<IMove>,
@@ -59,7 +66,7 @@ TEST_CASE("FFI: IsStaticContract is true for plain struct with Params (no virtua
     SUCCEED("IMove is a DOD contract");
 }
 
-TEST_CASE("FFI: IsStaticContract is false for polymorphic contract (vtable present)", "[ffi][abi]") {
+TEST_CASE("Stage 08 — IsStaticContract is false for polymorphic contract (vtable present)", "[stage08][ffi]") {
     // A Brain contract has virtual methods → requires C++ ABI (vtable layout).
     // Rust/WASM cannot fill this slot without a C++ wrapper.
     static_assert(!crg::capabilities::IsStaticContract<ILog>,
@@ -78,7 +85,7 @@ namespace {
     }
 }
 
-TEST_CASE("FFI: raw C function pointer satisfies a Muscle CapabilityHandle", "[ffi][abi]") {
+TEST_CASE("Stage 08 — raw C function pointer satisfies a Muscle CapabilityHandle", "[stage08][ffi]") {
     // BindingTarget<IMove, true> wraps the fn ptr — this is what CapabilityRouter
     // stores in the routing tensor. We bypass the router here to test the slot directly.
     crg::capabilities::BindingTarget<IMove, true> target;
@@ -93,7 +100,7 @@ TEST_CASE("FFI: raw C function pointer satisfies a Muscle CapabilityHandle", "[f
     REQUIRE(p.m_Speed == 42.f);
 }
 
-TEST_CASE("FFI: Muscle CapabilityHandle with null fn ptr reports unbound", "[ffi][abi]") {
+TEST_CASE("Stage 08 — Muscle CapabilityHandle with null fn ptr reports unbound", "[stage08][ffi]") {
     // An unbound slot (no trampoline registered) must be detectable without a crash.
     crg::capabilities::CapabilityHandle<IMove> handle;
     REQUIRE(!handle);
@@ -112,7 +119,7 @@ namespace {
 
 CRG_DECLARE_UNIVERSAL_NODE_ANCHOR(MockNodeList)
 
-TEST_CASE("FFI: NodeLink self-registration requires C++ constructor (no C-ABI path)", "[ffi][abi]") {
+TEST_CASE("Stage 08 — NodeLink self-registration requires C++ constructor (no C-ABI path)", "[stage08][ffi]") {
     // The NodeLink constructor does static_cast<TNode*>(this) — CRTP.
     // This requires:
     //   - C++ object model (vtable installed before the cast is safe)
@@ -130,7 +137,7 @@ TEST_CASE("FFI: NodeLink self-registration requires C++ constructor (no C-ABI pa
 
 // ─── 4. Params must be trivially copyable for true C-ABI compatibility ────────
 
-TEST_CASE("FFI: IMove::Params is trivially copyable (POD rule for cross-language safety)", "[ffi][abi]") {
+TEST_CASE("Stage 08 — IMove::Params is trivially copyable (POD rule for cross-language safety)", "[stage08][ffi]") {
     // For a Params struct to cross a C or WASM boundary safely:
     //   - no hidden vtable pointer
     //   - no dynamic allocation (std::string, std::vector forbidden)

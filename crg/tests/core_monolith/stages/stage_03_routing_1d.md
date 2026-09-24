@@ -20,26 +20,32 @@ namespace crg::routing {
     };
 }
 
-// 3. Primary Capability = default cell (Easy)
-template<typename TModel, typename TAt>
-struct DiffMove : public Capability<IMove> {
-    static void Execute(IMove::Params& p) { p.m_Speed = 1.0f; }
+// 3. Contract: Brain (virtual), same shape as Stage 02 -- routing doesn't care
+struct IMove {
+    virtual void Move(float& outSpeed) const = 0;
+    virtual ~IMove() = default;
 };
 
-// 4. Partial specialization = Hard cell
+// 4. Primary Capability = default cell (Easy)
+template<typename TModel, typename TAt>
+struct DiffMove : public Capability<IMove> {
+    void Move(float& outSpeed) const override { outSpeed = 1.0f; }
+};
+
+// 5. Partial specialization = Hard cell
 template<typename TModel>
 struct DiffMove<TModel, At<Difficulty::Hard>> : public Capability<IMove> {
-    static void Execute(IMove::Params& p) { p.m_Speed = 3.0f; }
+    void Move(float& outSpeed) const override { outSpeed = 3.0f; }
 };
 
 namespace {
     static const CapabilityBinding<MyDomain, MyUnit, DiffMove> s_b;
 }
 
-// 5. Find() gains a context argument
+// 6. Find() gains a context argument; dispatch is operator->() (Brain)
 auto gate = CapabilityRouter<MyDomain>::Find<IMove>(handle, Difficulty::Hard);
-IMove::Params p;
-gate(p);  // p.m_Speed == 3.0f
+float speed = 0.f;
+gate->Move(speed);  // speed == 3.0f
 ```
 
 ## Offset computation: Horner's method (branchless)
@@ -59,6 +65,10 @@ For 1D: `offset = slot * Count + static_cast<size_t>(value)`. One multiply-add, 
 - A contiguous enum class starting at 0
 - `EnumTraits<T>::Count` must match the number of values exactly
 - Partial specialization on `At<Val>` overrides the corresponding cell
+
+## Routing is shape-agnostic
+`Find()` resolves a cell the same way regardless of whether the contract at that cell is Brain
+(virtual, as above) or Muscle.
 
 ## When to use
 - One context dimension drives behavior (difficulty, quality preset...)

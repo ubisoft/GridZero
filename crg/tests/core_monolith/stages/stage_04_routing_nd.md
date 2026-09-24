@@ -19,22 +19,30 @@ namespace crg::routing {
     };
 }
 
+// Contract: Brain (virtual), same shape as Stages 02-03
+struct ILocomotion {
+    virtual void Drive(float& outSpeed, bool& outActive) const = 0;
+    virtual ~ILocomotion() = default;
+};
+
 // Primary template = default behavior for all 12 cells
 template<typename TModel, typename TAt>
 struct DriveCapability : public Capability<ILocomotion> {
-    static void Execute(ILocomotion::Params& p) { p.m_Speed = 1.0f; }
+    void Drive(float& outSpeed, bool& outActive) const override { outSpeed = 1.0f; outActive = true; }
 };
 
 // Override a single corner: Nominal x Flat x Performance
 template<typename TModel>
 struct DriveCapability<TModel, At<Battery::Nominal, Terrain::Flat, Mode::Performance>>
     : public Capability<ILocomotion> {
-    static void Execute(ILocomotion::Params& p) { p.m_Speed = 10.0f; }
+    void Drive(float& outSpeed, bool& outActive) const override { outSpeed = 10.0f; outActive = true; }
 };
 
-// Find() gains N context arguments
+// Find() gains N context arguments; dispatch is operator->() (Brain)
 auto gate = CapabilityRouter<MyDomain>::Find<ILocomotion>(
                 handle, Battery::Nominal, Terrain::Flat, Mode::Performance);
+float speed = 0.f; bool active = false;
+gate->Drive(speed, active);
 ```
 
 ## Offset computation: Horner's method (branchless)
@@ -44,6 +52,10 @@ offset = (...((v0 x |A1|) + v1) x |A2| + v2 ...) x |AN-1| + vN-1
 - A single multiply-add pass
 - Zero branching, zero hashing
 - Fully computed at compile time for constexpr values
+
+Worked example: `At<Battery::Nominal, Terrain::Flat, Mode::Performance>` is indices `(2, 0, 1)`
+against counts `(3, 2, 2)`. Applying Horner left-to-right: `((2 * 2) + 0) * 2 + 1 = 9` — tensor
+index 9.
 
 ## Invariants
 | Property | Value |
@@ -59,6 +71,17 @@ Semantics are identical to Stage 03 - only the number of values changes.
 ## Watch out: combinatorial explosion
 Volume = product of all Counts. With 4 axes of Count=4: **256 cells**.
 Use this only when the total volume stays reasonable.
+
+## The full matrix builds itself: models x axis-cells
+Stage 02 showed that `CapabilityBinding`'s `TModel` slot can be a single model or a
+`TypeList<...>` of models, fanning one capability declaration across all of them. Combine that
+with an N-D axis here and one declaration produces the complete matrix — every listed model x
+every axis cell — with no additional code per model.
+
+## Data layout: this already has ECS shape
+The routing tensor is a flat array indexed by `DenseID * Volume + offset` — a Structure-of-Arrays
+keyed by a dense integer id, the same shape an ECS component store uses. CRG's dispatch mirrors
+an ECS's data layout rather than competing with it.
 
 ## What's new vs Stage 03
 Multiple axes in `CapabilitySpace`. `Find()` takes N context arguments.

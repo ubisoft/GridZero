@@ -1,4 +1,4 @@
-# Stage 05 - Brain Capability: OOP / Polymorphic Path
+# Stage 02 - Brain Capability: OOP / Polymorphic Path
 
 ## Problem
 Some contracts are naturally polymorphic: several named virtual methods, object semantics.
@@ -18,7 +18,8 @@ struct ILogger {
 };
 
 // Brain Capability: inherits the virtual interface directly
-template<typename TModel, typename TAt>
+// Arity-1 -- no TAt. Stage 02 has no axis; TAt is introduced at Stage 03.
+template<typename TModel>
 struct ConsoleLogger : Capability<ILogger> {
     void Log(const char* msg) const override { (void)msg; }
     int  Level()             const override { return 1; }
@@ -33,6 +34,24 @@ auto gate = CapabilityRouter<MyDomain>::Find<ILogger>(handle);
 gate->Log("message");   // one pointer dereference + one virtual call
 int lvl = gate->Level();
 ```
+
+## Model-set binding: one model, or a `TypeList` of models
+
+`CapabilityBinding<TDomain, TModel, TCapabilities...>`'s `TModel` slot accepts either a single
+model or a `crg::TypeList<TModels...>`. The `TypeList` form fans the *same* capability set across
+*every* listed model from one declaration — the matrix (models x capabilities) builds itself,
+no per-model repetition:
+
+```cpp
+using Squad = crg::TypeList<Scout, Drone>;
+namespace { static const CapabilityBinding<MyDomain, Squad, ConsoleLogger> s_squad; }
+// One declaration binds ConsoleLogger for BOTH Scout and Drone.
+// Symmetric with the single-model form above -- same TModel slot, same syntax.
+```
+
+See `capability_binding.md` ("`TModel = TypeList<TModels...>`") for the mechanism: this is a
+partial specialization that derives from `CapabilityBinding<TDomain, TModels, TCaps...>...`, one
+base per model, each independently self-registering into the arena.
 
 ## Muscle vs Brain - a compile-time decision, zero cost
 ```cpp
@@ -60,6 +79,5 @@ The choice is a compile-time SFINAE. Zero cost for the path not taken.
 | Natural OOP semantics (render, serialize, debug) | Extreme hot path (< 1ns) |
 | Not on the nanosecond hot path | Stateless logic, a single entry point |
 
-## What's new vs Stages 02-04
-Virtual contract -> `IsStaticContract == false` -> `CapabilityHandle` gains `operator->()` instead of `operator()`.
-Everything else stays identical.
+## What's new vs Stage 01
+First capability contract and binding. Virtual contract -> `IsStaticContract == false` -> `CapabilityHandle` gains `operator->()` instead of `operator()`.

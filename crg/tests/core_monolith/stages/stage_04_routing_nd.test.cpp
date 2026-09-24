@@ -55,9 +55,10 @@ namespace crg {
     template<> struct EnumTraits<Mode04>    { static constexpr std::size_t Count = 2; };
 }
 
-// ─── Contract ─────────────────────────────────────────────────────────────────
+// ─── Contract: Brain (virtual), same shape as Stages 02-03 ────────────────────
 struct ILocomotion04 {
-    struct Params { float m_Speed{ 0.f }; bool m_Active{ false }; };
+    virtual void Drive(float& outSpeed, bool& outActive) const = 0;
+    virtual ~ILocomotion04() = default;
 };
 
 // ─── Routing traits: 3D tensor — 3 × 2 × 2 = 12 cells ───────────────────────
@@ -70,23 +71,22 @@ namespace crg::routing {
 // ─── Primary template: default behavior for all 12 cells ─────────────────────
 template<typename TModel, typename TAt>
 struct DriveCapability : public Capability<ILocomotion04> {
-    static void Execute(ILocomotion04::Params& p) {
-        p.m_Speed  = 1.0f;
-        p.m_Active = true;
+    void Drive(float& outSpeed, bool& outActive) const override {
+        outSpeed  = 1.0f;
+        outActive = true;
     }
 };
 
 // ─── Override the peak-performance corner: Nominal × Flat × Performance ───────
 //   At<Battery04::Nominal, Terrain04::Flat, Mode04::Performance> is the
-//   compile-time coordinate for tensor index (2 × 2 × 1) + (0 × 1) + 1 = 5
-//   via Horner: ((2 × 2) + 0) × 2 + 1 = 9... actually the formula is applied
-//   left-to-right: ((2)*2 + 0)*2 + 1 = 9. The math is transparent to the user.
+//   compile-time coordinate for tensor index 9: Horner applied left-to-right
+//   over indices (2, 0, 1) against counts (3, 2, 2) — ((2 * 2) + 0) * 2 + 1 = 9.
 template<typename TModel>
 struct DriveCapability<TModel, At<Battery04::Nominal, Terrain04::Flat, Mode04::Performance>>
     : public Capability<ILocomotion04> {
-    static void Execute(ILocomotion04::Params& p) {
-        p.m_Speed  = 10.0f;
-        p.m_Active = true;
+    void Drive(float& outSpeed, bool& outActive) const override {
+        outSpeed  = 10.0f;
+        outActive = true;
     }
 };
 
@@ -108,11 +108,12 @@ TEST_CASE("Stage 04 — Default cell dispatches via primary template", "[stage04
                       token, Battery04::Critical, Terrain04::Rough, Mode04::Eco);
     REQUIRE(gate);
 
-    ILocomotion04::Params p;
-    gate(p);
+    float speed = 0.f;
+    bool  active = false;
+    gate->Drive(speed, active);
 
-    REQUIRE(p.m_Speed  == 1.0f);
-    REQUIRE(p.m_Active == true);
+    REQUIRE(speed  == 1.0f);
+    REQUIRE(active == true);
 }
 
 TEST_CASE("Stage 04 — Specialised corner cell dispatches via partial specialization", "[stage04][routingNd]") {
@@ -121,11 +122,12 @@ TEST_CASE("Stage 04 — Specialised corner cell dispatches via partial specializ
                       token, Battery04::Nominal, Terrain04::Flat, Mode04::Performance);
     REQUIRE(gate);
 
-    ILocomotion04::Params p;
-    gate(p);
+    float speed = 0.f;
+    bool  active = false;
+    gate->Drive(speed, active);
 
-    REQUIRE(p.m_Speed  == 10.0f);
-    REQUIRE(p.m_Active == true);
+    REQUIRE(speed  == 10.0f);
+    REQUIRE(active == true);
 }
 
 TEST_CASE("Stage 04 — All 12 cells are populated after first Find", "[stage04][routingNd]") {

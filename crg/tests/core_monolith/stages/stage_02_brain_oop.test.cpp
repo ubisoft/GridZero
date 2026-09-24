@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 License. See LICENSE.md in the project root for license information.
 
 // ═════════════════════════════════════════════════════════════════════════════
-// STAGE 05 — Brain Capability: OOP / Polymorphic Path
+// STAGE 02 — Brain Capability: OOP / Polymorphic Path
 // ─────────────────────────────────────────────────────────────────────────────
 // PROBLEM:
 //   Some contracts are naturally polymorphic: multiple named virtual methods,
@@ -19,14 +19,19 @@
 //   The router stores a pointer to the statically-allocated capability instance.
 //   Cost: one pointer dereference + one virtual call. No heap allocation.
 //
+//   CapabilityBinding<TDomain, TModel, TCapabilities...>'s TModel slot accepts
+//   either a single model or a crg::TypeList<TModels...> — the latter fans the
+//   same capability set across every listed model from one declaration. The
+//   matrix (models × capabilities) builds itself; see the last two cases below.
+//
 // WHEN TO USE:
 //   - Contracts with multiple named methods (render, serialize, debug, …)
 //   - OOP-style domains where virtual is the natural fit
 //   - The call is not on the extreme hot path (< 1ns budget)
 //
-// WHAT'S NEW vs Stages 02–04:
-//   Virtual contract → IsStaticContract == false → CapabilityHandle gains
-//   operator->() instead of operator(). Everything else is unchanged.
+// WHAT'S NEW vs Stage 01:
+//   First capability contract and binding. Virtual contract → IsStaticContract
+//   == false → CapabilityHandle gains operator->() instead of operator().
 // ═════════════════════════════════════════════════════════════════════════════
 
 #include "catch.hpp"
@@ -38,66 +43,95 @@ using namespace crg::routing;
 using namespace crg::capabilities;
 
 // ─── Domain + Model ───────────────────────────────────────────────────────────
-struct S05Domain {};
-CRG_DECLARE_DOMAIN(S05Domain)
-CRG_DEFINE_DOMAIN(S05Domain)
+struct S02Domain {};
+CRG_DECLARE_DOMAIN(S02Domain)
+CRG_DEFINE_DOMAIN(S02Domain)
 
-struct S05Unit { u8 m_Data[8]; };
-CRG_DECLARE_DOMAIN_MODELS(S05Domain,
-    S05Unit)
+struct S02Unit { u8 m_Data[8]; };
+CRG_DECLARE_DOMAIN_MODELS(S02Domain,
+    S02Unit)
 
 // ─── Brain contract: virtual methods, no Params ───────────────────────────────
-//   std::is_polymorphic_v<ILogger05> == true
-//   → IsStaticContract<ILogger05>       == false
-//   → CapabilityHandle stores const ILogger05* and has operator->()
-struct ILogger05 {
+//   std::is_polymorphic_v<ILogger02> == true
+//   → IsStaticContract<ILogger02>       == false
+//   → CapabilityHandle stores const ILogger02* and has operator->()
+struct ILogger02 {
     virtual void Log(const char* msg) const = 0;
     virtual int  Level()             const = 0;
-    virtual ~ILogger05() = default;
+    virtual ~ILogger02() = default;
 };
 
 // ─── Brain capability: inherits the virtual interface directly ────────────────
 //   No Capability<> wrapper needed — the SFINAE check in FillArena accepts
-//   any type that is std::is_base_of_v<ILogger05, Impl>.
+//   any type that is std::is_base_of_v<ILogger02, Impl>.
 template<typename TModel>
-struct ConsoleLogger05 : Capability<ILogger05> {
+struct ConsoleLogger02 : Capability<ILogger02> {
     void Log(const char* msg) const override { (void)msg; }
     int  Level()             const override { return 1; }
 };
 
 namespace {
-    static const CapabilityBinding<S05Domain, S05Unit, ConsoleLogger05> s_b;
+    static const CapabilityBinding<S02Domain, S02Unit, ConsoleLogger02> s_b;
+}
+
+// ─── Model-set binding: TModel = a single model, or crg::TypeList<TModels...> ─
+//   Same capability, same one-liner — fanned across every model in the list.
+struct S02Scout { u8 m_Data[8]; };
+struct S02Drone { u8 m_Data[8]; };
+CRG_DECLARE_DOMAIN_MODELS(S02Domain,
+    S02Scout,
+    S02Drone)
+
+using S02Squad = TypeList<S02Scout, S02Drone>;
+
+namespace {
+    static const CapabilityBinding<S02Domain, S02Squad, ConsoleLogger02> s_SquadBinding;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST_CASE("Stage 05 — Brain token is valid after Find", "[stage05][brain]") {
-    auto token = ModelToken<S05Domain>::FromType<S05Unit>();
-    auto gate  = CapabilityRouter<S05Domain>::Find<ILogger05>(token);
+TEST_CASE("Stage 02 — Brain token is valid after Find", "[stage02][brain]") {
+    auto token = ModelToken<S02Domain>::FromType<S02Unit>();
+    auto gate  = CapabilityRouter<S02Domain>::Find<ILogger02>(token);
 
     REQUIRE(gate);
 }
 
-TEST_CASE("Stage 05 — operator->() dispatches through the virtual interface", "[stage05][brain]") {
-    auto token = ModelToken<S05Domain>::FromType<S05Unit>();
-    auto gate  = CapabilityRouter<S05Domain>::Find<ILogger05>(token);
+TEST_CASE("Stage 02 — operator->() dispatches through the virtual interface", "[stage02][brain]") {
+    auto token = ModelToken<S02Domain>::FromType<S02Unit>();
+    auto gate  = CapabilityRouter<S02Domain>::Find<ILogger02>(token);
 
-    // gate is CapabilityHandle<ILogger05, false>.
-    // operator->() returns const ILogger05* → virtual call resolves to ConsoleLogger05.
+    // gate is CapabilityHandle<ILogger02, false>.
+    // operator->() returns const ILogger02* → virtual call resolves to ConsoleLogger02.
     REQUIRE(gate->Level() == 1);
-    gate->Log("hello from stage 05"); // no crash = success
+    gate->Log("hello from stage 02"); // no crash = success
 }
 
-TEST_CASE("Stage 05 — Brain and Muscle path selected at compile time", "[stage05][brain]") {
+TEST_CASE("Stage 02 — Brain and Muscle path selected at compile time", "[stage02][brain]") {
     // The choice between Brain and Muscle is a zero-cost compile-time decision.
     // No runtime flag, no branch, no cost for the path you don't take.
-    STATIC_REQUIRE(capabilities::IsStaticContract<ILogger05> == false);
+    STATIC_REQUIRE(capabilities::IsStaticContract<ILogger02> == false);
 
     // For reference: a DOD contract (has Params, not polymorphic) would be true.
     struct IMover { struct Params { float m_Speed; }; };
     STATIC_REQUIRE(capabilities::IsStaticContract<IMover> == true);
 }
 
-TEST_CASE("Stage 05 — Monolithic build: Brain CapabilityHandle carries zero epoch overhead", "[stage05][brain]") {
-    STATIC_REQUIRE(sizeof(CapabilityHandle<ILogger05>) == sizeof(void*));
+TEST_CASE("Stage 02 — Monolithic build: Brain CapabilityHandle carries zero epoch overhead", "[stage02][brain]") {
+    STATIC_REQUIRE(sizeof(CapabilityHandle<ILogger02>) == sizeof(void*));
+}
+
+TEST_CASE("Stage 02 — TModel accepts a single model or a TypeList<...> of models", "[stage02][brain][typelist]") {
+    // One CapabilityBinding<S02Domain, S02Squad, ConsoleLogger02> declaration
+    // above bound BOTH S02Scout and S02Drone — no per-model repetition.
+    auto scoutToken = ModelToken<S02Domain>::FromType<S02Scout>();
+    auto droneToken = ModelToken<S02Domain>::FromType<S02Drone>();
+
+    auto scoutGate = CapabilityRouter<S02Domain>::Find<ILogger02>(scoutToken);
+    auto droneGate = CapabilityRouter<S02Domain>::Find<ILogger02>(droneToken);
+
+    REQUIRE(scoutGate);
+    REQUIRE(droneGate);
+    REQUIRE(scoutGate->Level() == 1);
+    REQUIRE(droneGate->Level() == 1);
 }

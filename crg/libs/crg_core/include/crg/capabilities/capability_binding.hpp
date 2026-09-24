@@ -158,4 +158,18 @@ namespace crg::capabilities {
         }
     };
 
+    // ─── TModel = TypeList<TModels...> — fan out across every listed model ───────
+    // Each TModels... gets its own independent CapabilityBinding<TDomain, TModels,
+    // TCapabilities...> base. Every base is itself a DomainArenaPopulator<TDomain>
+    // (via NodeLink CRTP): constructing ONE TypeList-specialized instance
+    // self-registers N distinct populator nodes -- one per model -- into the same
+    // NodeLink chain, each in its own subobject storage. No disambiguation cast is
+    // needed here (unlike CapabilityNode's shared-Contract* cast above): this
+    // aggregate is never accessed through `this`, so nothing about it is ambiguous.
+    template<class TDomain, class... TModels, template<class...> class... TCapabilities>
+    struct CapabilityBinding<TDomain, ::crg::TypeList<TModels...>, TCapabilities...>
+        : public CapabilityBinding<TDomain, TModels, TCapabilities...>...
+    {
+    };
+
 } // namespace crg::capabilities
