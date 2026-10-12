@@ -20,7 +20,7 @@ using namespace crg::capabilities;
 
 // 1. Defined in a named namespace to guarantee stable FNV-1a TypeHashes
 namespace crg::test::robustness {
-    struct RoboticsPartition {};
+    struct RoboticsDomain {};
     struct DroneModel { std::uint8_t m_Data[16]; };
 
     struct ILocomotion { struct Params { float m_Speed{ 0.0f }; }; };
@@ -29,8 +29,8 @@ namespace crg::test::robustness {
 }
 
 // 2. Global registration for traits visibility
-CRG_DECLARE_DOMAIN(crg::test::robustness::RoboticsPartition)
-CRG_DECLARE_DOMAIN_MODELS(crg::test::robustness::RoboticsPartition,
+CRG_DECLARE_DOMAIN(crg::test::robustness::RoboticsDomain)
+CRG_DECLARE_DOMAIN_MODELS(crg::test::robustness::RoboticsDomain,
     crg::test::robustness::DroneModel)
 
 namespace crg {
@@ -38,8 +38,8 @@ namespace crg {
 }
 
 namespace crg::routing {
-    template<> struct CapabilityRoutingTraits<crg::test::robustness::RoboticsPartition, crg::test::robustness::ILocomotion> { using SpaceType = CapabilitySpace<crg::test::robustness::State>; };
-    template<> struct CapabilityRoutingTraits<crg::test::robustness::RoboticsPartition, crg::test::robustness::ISensor>      { using SpaceType = CapabilitySpace<crg::test::robustness::State>; };
+    template<> struct CapabilityRoutingTraits<crg::test::robustness::RoboticsDomain, crg::test::robustness::ILocomotion> { using SpaceType = CapabilitySpace<crg::test::robustness::State>; };
+    template<> struct CapabilityRoutingTraits<crg::test::robustness::RoboticsDomain, crg::test::robustness::ISensor>      { using SpaceType = CapabilitySpace<crg::test::robustness::State>; };
 }
 
 // 3. Bindings
@@ -54,8 +54,8 @@ namespace crg::test::robustness {
         static void Execute(ISensor::Params& p) { p.m_SignalStrength = 100; }
     };
 
-    CapabilityBinding<RoboticsPartition, DroneModel, DroneMove>  s_MoveBinding;
-    CapabilityBinding<RoboticsPartition, DroneModel, DroneSense> s_SenseBinding;
+    CapabilityBinding<RoboticsDomain, DroneModel, DroneMove>  s_MoveBinding;
+    CapabilityBinding<RoboticsDomain, DroneModel, DroneSense> s_SenseBinding;
 }
 
 // 4. Test Suite
@@ -69,7 +69,7 @@ TEST_CASE("Debug: Robustness Nullptr Tracker", "[debug]") {
     using namespace crg::capabilities;
 
     SECTION("PROBE 1: Offset Math & Dimension Validation") {
-        using Space = CapabilityRoutingTraits<RoboticsPartition, ILocomotion>::SpaceType;
+        using Space = CapabilityRoutingTraits<RoboticsDomain, ILocomotion>::SpaceType;
         
         // Verify the dimensions are correctly extracted
         STATIC_REQUIRE(Space::Dimensions == 1);
@@ -81,7 +81,7 @@ TEST_CASE("Debug: Robustness Nullptr Tracker", "[debug]") {
     }
 
     SECTION("PROBE 2: Strong Type Generation (The Tuple Ghost)") {
-        using Space = CapabilityRoutingTraits<RoboticsPartition, ILocomotion>::SpaceType;
+        using Space = CapabilityRoutingTraits<RoboticsDomain, ILocomotion>::SpaceType;
         
         // What the framework generates at index 0
         using GeneratedType = typename Space::template AtType<0>;
@@ -107,15 +107,15 @@ TEST_CASE("Debug: Robustness Nullptr Tracker", "[debug]") {
     }
 
     SECTION("PROBE 4: Tensor Arena Memory State") {
-        auto token = crg::models::ModelToken<RoboticsPartition>::FromType<DroneModel>();
+        auto token = crg::models::ModelToken<RoboticsDomain>::FromType<DroneModel>();
 
         // Triggers the arena's lazy build
-        CapabilityRouter<RoboticsPartition>::Find<ILocomotion>(token, State::Active);
+        CapabilityRouter<RoboticsDomain>::Find<ILocomotion>(token, State::Active);
 
         // IF THIS FAILS: the arena wasn't even allocated. The Populator didn't run.
-        REQUIRE(TensorArena<RoboticsPartition, ILocomotion>::GetSize() > 0);
+        REQUIRE(TensorArena<RoboticsDomain, ILocomotion>::GetSize() > 0);
 
-        const auto& cell = TensorArena<RoboticsPartition, ILocomotion>::GetData()[0]; // DenseID(0) * Vol(2) + Offset(0) = 0
+        const auto& cell = TensorArena<RoboticsDomain, ILocomotion>::GetData()[0]; // DenseID(0) * Vol(2) + Offset(0) = 0
 
         // IF THIS FAILS: the arena exists, but the cell stayed empty. SFINAE or the build loop skipped it.
         REQUIRE(cell.m_Fallback.m_Target != nullptr);
@@ -133,29 +133,29 @@ TEST_CASE("Debug: Router Execution & Memory Alignment", "[debug]") {
     using namespace crg::models;
 
     SECTION("PROBE 5: Routing Data State Validation") {
-        auto token = ModelToken<RoboticsPartition>::FromType<DroneModel>();
+        auto token = ModelToken<RoboticsDomain>::FromType<DroneModel>();
         REQUIRE(token.IsValid() == true);
 
         // Manually triggers the build for DroneModel
-        CapabilityRouter<RoboticsPartition>::Find<ILocomotion>(token, State::Active);
+        CapabilityRouter<RoboticsDomain>::Find<ILocomotion>(token, State::Active);
 
         // IF THIS FAILS: the Router didn't call the ArenaBuilder!
-        REQUIRE(TensorArena<RoboticsPartition, ILocomotion>::GetSize() > 0);
+        REQUIRE(TensorArena<RoboticsDomain, ILocomotion>::GetSize() > 0);
 
-        using Space = CapabilityRoutingTraits<RoboticsPartition, ILocomotion>::SpaceType;
+        using Space = CapabilityRoutingTraits<RoboticsDomain, ILocomotion>::SpaceType;
         std::size_t index = Space::ComputeOffset(token.GetDenseIndex(), State::Active);
 
-        const auto& cell = TensorArena<RoboticsPartition, ILocomotion>::GetData()[index];
+        const auto& cell = TensorArena<RoboticsDomain, ILocomotion>::GetData()[index];
 
         // IF THIS FAILS: the Token's ID doesn't match the row written by the Populator
         REQUIRE(cell.m_Fallback.m_Target != nullptr);
     }
 
     SECTION("PROBE 6: Router Dispatch Check") {
-        auto token = ModelToken<RoboticsPartition>::FromType<DroneModel>();
+        auto token = ModelToken<RoboticsDomain>::FromType<DroneModel>();
 
         // Memory is confirmed by Probe 5, let's look at what the router returns
-        auto gate = CapabilityRouter<RoboticsPartition>::Find<ILocomotion>(token, State::Active);
+        auto gate = CapabilityRouter<RoboticsDomain>::Find<ILocomotion>(token, State::Active);
 
         // IF THIS FAILS WHILE PROBE 5 PASSES:
         // the problem is ONLY in CapabilityRouter::Find's return.
@@ -168,11 +168,11 @@ TEST_CASE("Debug: Router Execution & Memory Alignment", "[debug]") {
 TEST_CASE("Router: Multi-Capability Stacking", "[routing][stacking]") {
     using namespace crg::test::robustness;
 
-    auto token = ModelToken<RoboticsPartition>::FromType<DroneModel>();
+    auto token = ModelToken<RoboticsDomain>::FromType<DroneModel>();
 
     SECTION("Independent Tensor Resolution") {
-        auto moveCap  = CapabilityRouter<RoboticsPartition>::Find<ILocomotion>(token, State::Active);
-        auto senseCap = CapabilityRouter<RoboticsPartition>::Find<ISensor>(token, State::Active);
+        auto moveCap  = CapabilityRouter<RoboticsDomain>::Find<ILocomotion>(token, State::Active);
+        auto senseCap = CapabilityRouter<RoboticsDomain>::Find<ISensor>(token, State::Active);
 
         REQUIRE(moveCap);
         REQUIRE(senseCap);

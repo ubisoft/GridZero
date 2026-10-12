@@ -28,7 +28,7 @@ _deps/
 .env.local
 
 # External deps vendored by bootstrap_deps.sh
-external/
+/external/
 
 # Sharpmake generated files
 generated/

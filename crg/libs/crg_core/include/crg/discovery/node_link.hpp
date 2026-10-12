@@ -28,6 +28,11 @@
 
 namespace crg::discovery {
 
+    enum class VisitOrder {
+        Forward,
+        Backward
+    }; 
+
     template<typename T> struct UniversalAnchor;
     struct AnchorLink;
     struct ISyncNode;
@@ -75,8 +80,9 @@ namespace crg::discovery {
 
     private:
         struct Linearizer {
-            Linearizer() {
-                RefreshCache();
+            Linearizer(bool autoRefreshCache) {
+                if (autoRefreshCache)
+                    RefreshCache();
             }
 
             void RefreshCache() {
@@ -93,8 +99,8 @@ namespace crg::discovery {
             }
         };
 
-        static Linearizer& GetLinearizer() {
-            static Linearizer s_Linearizer;
+        static Linearizer& GetLinearizer(bool autoRefreshCache = true) {
+            static Linearizer s_Linearizer(autoRefreshCache);
             return s_Linearizer;
         }
 
@@ -108,7 +114,8 @@ namespace crg::discovery {
         }
 
         static void RefreshCache() {
-            GetLinearizer().RefreshCache();
+            static constexpr bool s_AutoRefreshCache{};
+            GetLinearizer(s_AutoRefreshCache).RefreshCache();
         }
 
         static const std::vector<const TNode*>& GetCache() {
@@ -116,16 +123,31 @@ namespace crg::discovery {
             return CacheAnchor<TNode>::Get();
         }
 
-        template<typename CallableT>
+        template<VisitOrder Order = VisitOrder::Forward, typename CallableT>
         static void Visit(CallableT&& func) {
             using ReturnT = std::invoke_result_t<CallableT, TNode&>;
-            constexpr bool is_cancellable = std::is_same_v<ReturnT, bool>;
 
-            for (const TNode* nodePtr : GetCache()) {
-                if constexpr (is_cancellable) {
-                    if (!func(*const_cast<TNode*>(nodePtr))) break;
+            // Explicit and targeted capture: capture only what is needed, no default capture.
+            // MSVC rejects a captured constexpr local as an `if constexpr` condition
+            // (C2131): test the type directly inside the lambda.
+            auto invoke_node = [&func](const TNode* nodePtr) -> bool {
+                if constexpr (std::is_same_v<ReturnT, bool>) {
+                    return func(*const_cast<TNode*>(nodePtr)); // Propagate the break signal
                 } else {
                     func(*const_cast<TNode*>(nodePtr));
+                    return true; // Continue traversal
+                }
+            };
+
+            const auto& cache = GetCache();
+
+            if constexpr (Order == VisitOrder::Forward) {
+                for (const TNode* nodePtr : cache) {
+                    if (!invoke_node(nodePtr)) break;
+                }
+            } else {
+                for (auto it = cache.rbegin(); it != cache.rend(); ++it) {
+                    if (!invoke_node(*it)) break;
                 }
             }
         }

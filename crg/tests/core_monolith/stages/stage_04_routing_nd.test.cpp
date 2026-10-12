@@ -40,7 +40,7 @@ struct S04Domain {};
 CRG_DECLARE_DOMAIN(S04Domain)
 CRG_DEFINE_DOMAIN(S04Domain)
 
-struct S04Unit { u8 m_Data[8]; };
+struct S04Unit {};
 CRG_DECLARE_DOMAIN_MODELS(S04Domain,
     S04Unit)
 

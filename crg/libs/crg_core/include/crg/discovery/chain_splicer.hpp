@@ -24,7 +24,6 @@ public:
     template<typename THostDescriptor>
     static bool Splice(const THostDescriptor& hostDesc) noexcept {
         TNode* localHead = Anchor::GetLocalInstance();
-
         if (!SecurePluginCoupler<TNode>::IsSafe(localHead)) {
             return false;
         }
@@ -32,6 +31,19 @@ public:
         Anchor::SetRemoteTarget(hostDesc);
         Cache::SetRemoteTarget(hostDesc);
 
+        return Join(localHead);
+    }
+
+    static bool SpliceLinked() noexcept {
+        TNode* localHead = Anchor::GetLocalInstance();
+        if (!SecurePluginCoupler<TNode>::IsSafe(localHead)) {
+            return false;
+        }
+        return Join(localHead);
+    }
+
+private:
+    static bool Join(TNode* localHead) noexcept {
         if (!localHead || !Anchor::IsLinkedToHost()) {
             return false;
         }
@@ -55,12 +67,21 @@ public:
         return true;
     }
 
-    static bool Unsplice() noexcept {
+public:
+    // True only after a successful Splice(): the remote-target redirect is set before Splice() can still fail,
+    // so IsLinkedToHost() alone does not mean the chain was joined. The saved tail is set on success only.
+    static bool IsJoined() noexcept { return Anchor::GetSavedLocalTail() != nullptr; }
+
+   static bool CanUnsplice() noexcept {
+        return Anchor::GetLocalInstance() && Anchor::IsLinkedToHost();
+    }
+
+     static void Unsplice() noexcept {
         TNode* localHead = Anchor::GetLocalInstance();
         TNode* localTail = Anchor::GetSavedLocalTail();
 
         if (!localHead || !Anchor::IsLinkedToHost()) {
-            return false;
+            return;
         }
 
         // localTail->m_Next is the live "after-our-segment" pointer — correct
@@ -80,8 +101,6 @@ public:
         }
 
         if (localTail) { localTail->m_Next = nullptr; }
-
-        return true;
     }
 
     static void ClosePortal() noexcept {

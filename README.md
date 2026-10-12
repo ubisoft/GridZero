@@ -1,8 +1,29 @@
 # GridZero - Capability Routing Grid (CRG)
 
 > Companion code to "Capability Routing Grid - From Decoupled Plugins to the
-> Hardware Ceiling", Cyril Tissier's talk at CppCon 2026. Recording will be
-> linked here once available.
+> Hardware Ceiling", Cyril Tissier's talk at CppCon 2026.
+
+## 📖 GridZero User Manual
+
+From decoupled plugins, to routing via geometry, to tensor-based dispatch, to
+heterogeneous execution beyond the CPU, this document explains the
+architectural principles behind GridZero and how they compose into a complete
+system.
+
+**Read the manual:** [`doc/GridZero_User_Manual.md`](doc/GridZero_User_Manual.md)
+
+The manual is organized as a progressive journey:
+
+- 00. Hardware Affinity by Accident
+- 01. Collaboration via Existence
+- 02. Polymorphism via Capability
+- 03. Routing via Geometry
+- 04. Mutation via Residency
+- 05. Beyond the CPU
+- 06. Conclusion
+
+This is not an API reference. This is the architectural journey behind
+GridZero.
 
 [Slides for the talk at CppCon2026](doc/crg_talk_en.pptx)
 

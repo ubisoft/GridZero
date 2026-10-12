@@ -16,10 +16,10 @@ namespace crg::test::mono {
     using namespace crg::discovery;
     using namespace crg::routing;
 
-    struct GraphicsPartition {};
+    struct GraphicsDomain {};
 
     // Concrete Arena Populator for this domain
-    struct MockGraphicsPopulator : public DomainArenaPopulator<GraphicsPartition> {
+    struct MockGraphicsPopulator : public DomainArenaPopulator<GraphicsDomain> {
         void Populate() override { /* Routing rule injection logic */ }
     };
 }
@@ -28,8 +28,8 @@ namespace crg::test::mono {
 // STRICT ENFORCEMENT REGISTRATION
 // =============================================================================
 
-CRG_DECLARE_DOMAIN(::crg::test::mono::GraphicsPartition)
-CRG_DEFINE_DOMAIN(::crg::test::mono::GraphicsPartition)
+CRG_DECLARE_DOMAIN(::crg::test::mono::GraphicsDomain)
+CRG_DEFINE_DOMAIN(::crg::test::mono::GraphicsDomain)
 
 namespace {
     static const crg::test::mono::MockGraphicsPopulator s_GraphicsPopulator;
@@ -42,12 +42,8 @@ namespace {
 TEST_CASE("Discovery: Monolithic local domain populator", "[crg][mono]") {
     using namespace crg::test::mono;
 
-    // 1. Setup: Ensure router handles lazy bake configuration
-    CapabilityRouter<GraphicsPartition>::RefreshCache();
-
-    // 2. Verification: In monolithic mode, the populator is auto-registered to the cache
     int nodeCount = 0;
-    DomainArenaPopulator<GraphicsPartition>::Visit([&nodeCount](const DomainArenaPopulator<GraphicsPartition>&) {
+    DomainArenaPopulator<GraphicsDomain>::Visit([&nodeCount](const DomainArenaPopulator<GraphicsDomain>&) {
         nodeCount++;
     });
 
@@ -104,8 +100,7 @@ TEST_CASE("Discovery: RefreshCache is idempotent across repeated Clear+Populate"
     const std::size_t rulesBefore = cellsBefore[0].m_DynamicRules.size();
     REQUIRE(rulesBefore == 1);
 
-    CapabilityRouter<RefreshDomain>::RefreshCache();
-    CapabilityRouter<RefreshDomain>::RefreshCache();
+    ::crg::discovery::DomainArenaPopulator<RefreshDomain>::Chain::Build();
 
     const auto* cellsAfter = ::crg::routing::TensorArena<RefreshDomain, IRefreshRule>::GetData();
     const std::size_t rulesAfter = cellsAfter[0].m_DynamicRules.size();

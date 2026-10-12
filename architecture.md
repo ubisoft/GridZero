@@ -72,8 +72,10 @@ via virtual call in a single expression.
 
 `CRG_DEFINE_PLUGIN(Name)` is the only macro a plugin author needs. It emits three C-ABI entry points:
 
-- `CRG_Bootstrap(CRG_Context*)` — splice local chains into the host, fire `OnPluginLoad` on each `ISyncNode`.
-- `CRG_Shutdown()` — unsplice chains, fire `OnPluginUnload`.
+- `CRG_Bootstrap(CRG_Context*)` — runs three phases over every local `ISyncNode`, each phase completing for all nodes before the next starts: `BindStorage` (open the memory anchors), `SpliceTopology` (splice local chains into the host), `LinkStorage` (once every module record is visible, link shared state to the oldest module that defines it).
+- `CRG_Shutdown()` — the mirror image: `UnlinkStorage`, `UnspliceTopology`, `UnbindStorage`.
+
+The order of the nodes *inside* one phase is the static-initialization order of the module and is not specified. A node must not rely on another node of the same phase having run. A chain that did not join a host chain is therefore rebuilt in `LinkStorage`, after every splice, instead of in `SpliceTopology`.
 - `CRG_BridgeInit(CRG_Context*)` — alias for `CRG_Bootstrap`; called by the managed loader for bridge-loaded plugins.
 
 The host loader decides which to call. User code declares one macro regardless of load path.
@@ -84,7 +86,7 @@ A plugin can expose a plain `NodeLink` chain with no domain and no capability ro
 
 ### Capability plugins (with Domain)
 
-When a plugin provides `CapabilityBinding` instances, the chain splice also triggers `DomainSynchronizer<TDomain>::OnPluginLoad`, which rebuilds the routing tensor for that domain in the host's storage. The host holds the `TensorArenaStorage`; the cross-binary `UniversalAnchor` redirects writes from the plugin into the host arena during the bootstrap window.
+When a plugin provides `CapabilityBinding` instances, the chain splice also triggers `DomainSynchronizer<TDomain>::OnPluginLoad` (from `SpliceTopology` when the chain joined a host chain, from `LinkStorage` otherwise), which rebuilds the routing tensor for that domain in the host's storage. The host holds the `TensorArenaStorage`; the cross-binary `UniversalAnchor` redirects writes from the plugin into the host arena during the bootstrap window.
 
 ### Bridge scenario
 
@@ -101,7 +103,7 @@ crg::host::CRG_Context ctx{ &hostDesc };
 // 2. Load and bootstrap (standard path)
 HMODULE h = LoadLibraryA(path);
 ((void(*)(crg::host::CRG_Context*))GetProcAddress(h, "CRG_Bootstrap"))(&ctx);
-// → Splice, DomainSynchronizer::OnPluginLoad, RefreshCache — all automatic.
+// → BindStorage, SpliceTopology, LinkStorage, DomainSynchronizer::OnPluginLoad, RefreshCache — all automatic.
 
 // 3. Use
 auto gate = CapabilityRouter<D>::Find<C>(handle);

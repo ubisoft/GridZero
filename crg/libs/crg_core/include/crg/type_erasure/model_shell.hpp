@@ -190,17 +190,17 @@ namespace crg::shell {
             return &(static_cast<const ModelWrapper<TModel>&>(*m_Concept).m_Instance);
         }
 
-        template<typename TModel, typename TFunc, typename = std::enable_if_t<::crg::shell::ModelShellMutabilityTraits<TDomain>::IsMutable>>
+        template<typename TModel, typename TFunc, typename = std::enable_if_t<::crg::shell::ModelShellMutabilityTraits<TDomain>::IsMutable && sizeof(TModel)>>
         void Mutate(TFunc&& func) {
             func(const_cast<TModel&>(this->template Cast<TModel>()));
         }
 
-        template<typename TModel, typename TFunc, typename = std::enable_if_t<::crg::shell::ModelShellMutabilityTraits<TDomain>::IsMutable>>
+        template<typename TModel, typename TFunc, typename = std::enable_if_t<::crg::shell::ModelShellMutabilityTraits<TDomain>::IsMutable && sizeof(TModel)>>
         void TryMutate(TFunc&& func) {
             if (TModel* p = const_cast<TModel*>(this->template TryCast<TModel>())) {
                 func(*p);
             }
-        }
+        } 
 
         template<auto FuncPtr, class... TArgs>
         auto Invoke(TArgs&&... args) const {

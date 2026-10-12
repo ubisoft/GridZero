@@ -47,7 +47,7 @@ struct S02Domain {};
 CRG_DECLARE_DOMAIN(S02Domain)
 CRG_DEFINE_DOMAIN(S02Domain)
 
-struct S02Unit { u8 m_Data[8]; };
+struct S02Unit {};
 CRG_DECLARE_DOMAIN_MODELS(S02Domain,
     S02Unit)
 
@@ -76,8 +76,8 @@ namespace {
 
 // ─── Model-set binding: TModel = a single model, or crg::TypeList<TModels...> ─
 //   Same capability, same one-liner — fanned across every model in the list.
-struct S02Scout { u8 m_Data[8]; };
-struct S02Drone { u8 m_Data[8]; };
+struct S02Scout {};
+struct S02Drone {};
 CRG_DECLARE_DOMAIN_MODELS(S02Domain,
     S02Scout,
     S02Drone)

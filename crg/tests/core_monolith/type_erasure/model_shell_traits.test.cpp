@@ -17,11 +17,11 @@ using namespace crg;
 namespace crg::shell::test_traits {
 
     // No ModelShellMutabilityTraits specialization: exercises the default.
-    struct ReadOnlyPartition {};
+    struct ReadOnlyDomain {};
 
     struct PingModel {};
 
-    using PingShell = ModelShell<ReadOnlyPartition>;
+    using PingShell = ModelShell<ReadOnlyDomain>;
 
     struct IPinger {
         virtual int Ping(const PingShell& shell) const = 0;
@@ -31,8 +31,8 @@ namespace crg::shell::test_traits {
 
 }
 
-CRG_DECLARE_DOMAIN(crg::shell::test_traits::ReadOnlyPartition)
-CRG_DECLARE_DOMAIN_MODELS(crg::shell::test_traits::ReadOnlyPartition,
+CRG_DECLARE_DOMAIN(crg::shell::test_traits::ReadOnlyDomain)
+CRG_DECLARE_DOMAIN_MODELS(crg::shell::test_traits::ReadOnlyDomain,
     crg::shell::test_traits::PingModel,
     crg::shell::test_traits::IPinger)
 
@@ -43,13 +43,13 @@ CRG_DECLARE_DOMAIN_MODELS(crg::shell::test_traits::ReadOnlyPartition,
 namespace crg::shell::test_traits {
 
     // --- ModelShellTraits defaults forward the config macros verbatim ---
-    static_assert(ModelShellTraits<ReadOnlyPartition>::MaxSize == CRG_MODEL_SHELL_SIZE,
+    static_assert(ModelShellTraits<ReadOnlyDomain>::MaxSize == CRG_MODEL_SHELL_SIZE,
         "ModelShellTraits default MaxSize must equal CRG_MODEL_SHELL_SIZE");
-    static_assert(ModelShellTraits<ReadOnlyPartition>::MaxAlignment == CRG_CACHE_LINE_SIZE,
+    static_assert(ModelShellTraits<ReadOnlyDomain>::MaxAlignment == CRG_CACHE_LINE_SIZE,
         "ModelShellTraits default MaxAlignment must equal CRG_CACHE_LINE_SIZE");
 
     // --- ModelShellMutabilityTraits defaults to immutable ---
-    static_assert(ModelShellMutabilityTraits<ReadOnlyPartition>::IsMutable == false,
+    static_assert(ModelShellMutabilityTraits<ReadOnlyDomain>::IsMutable == false,
         "ModelShellMutabilityTraits must default to IsMutable = false");
 
     // --- IsOptional ---
@@ -70,13 +70,13 @@ namespace crg::shell::test_traits {
         "never std::optional<std::optional<float>>");
 
     // --- ModelShellMethodTraits: extracts Interface/ReturnType from a const routed method ---
-    using PingTraits = ModelShellMethodTraits<ReadOnlyPartition, decltype(&IPinger::Ping)>;
+    using PingTraits = ModelShellMethodTraits<ReadOnlyDomain, decltype(&IPinger::Ping)>;
     static_assert(std::is_same_v<PingTraits::Interface, IPinger>,
         "ModelShellMethodTraits must extract the owning interface");
     static_assert(std::is_same_v<PingTraits::ReturnType, int>,
         "ModelShellMethodTraits must extract the method's return type");
 
-    using NotifyTraits = ModelShellMethodTraits<ReadOnlyPartition, decltype(&IPinger::Notify)>;
+    using NotifyTraits = ModelShellMethodTraits<ReadOnlyDomain, decltype(&IPinger::Notify)>;
     static_assert(std::is_same_v<NotifyTraits::ReturnType, void>,
         "ModelShellMethodTraits must extract void return types too");
 
@@ -88,14 +88,14 @@ namespace crg::shell::test_traits {
 // =============================================================================
 
 TEST_CASE("ModelShellTraits: buffer sizing defaults match the config macros", "[type_erasure][traits]") {
-    using Traits = crg::shell::ModelShellTraits<crg::shell::test_traits::ReadOnlyPartition>;
+    using Traits = crg::shell::ModelShellTraits<crg::shell::test_traits::ReadOnlyDomain>;
 
     REQUIRE(Traits::MaxSize == CRG_MODEL_SHELL_SIZE);
     REQUIRE(Traits::MaxAlignment == CRG_CACHE_LINE_SIZE);
 }
 
 TEST_CASE("ModelShellMutabilityTraits: defaults to immutable", "[type_erasure][traits]") {
-    REQUIRE(crg::shell::ModelShellMutabilityTraits<crg::shell::test_traits::ReadOnlyPartition>::IsMutable == false);
+    REQUIRE(crg::shell::ModelShellMutabilityTraits<crg::shell::test_traits::ReadOnlyDomain>::IsMutable == false);
 }
 
 TEST_CASE("IsOptional: detects std::optional, rejects everything else", "[type_erasure][traits]") {

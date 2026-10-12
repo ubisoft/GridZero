@@ -22,7 +22,7 @@ namespace crg::models {
 // two distinct types never collide on a shared leaf name (studio::Scout vs
 // mod::Scout hash differently). Name carries the same full text for display
 // (CRG_HASH_NAME_ENABLED_ONLY builds only).
-#define CRG_DECLARE_MODEL(ModelType)                                                 \
+#define CRG_INTERNAL_DECLARE_MODEL(ModelType)                                        \
     namespace crg::hash {                                                            \
         template<>                                                                   \
         struct TypeHashBase<ModelType> {                                             \
@@ -49,7 +49,7 @@ namespace crg::models {
 #endif
 
 #define CRG_DDM_BIND(D, ModelType)                                               \
-    CRG_DECLARE_MODEL(ModelType)                                                 \
+    CRG_INTERNAL_DECLARE_MODEL(ModelType)                                        \
     namespace crg::models {                                                      \
         template<> struct ModelDomain<ModelType> { using Type = D; };            \
         namespace internal {                                                     \

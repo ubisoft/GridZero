@@ -18,10 +18,10 @@ using namespace crg::capabilities;
 // =============================================================================
 
 namespace crg::shell::test {
-    struct SimulationPartition {};
+    struct SimulationDomain {};
     
     // Alias ModelShell parameterized by its domain
-    using SimulationModelShell = ModelShell<SimulationPartition>;
+    using SimulationModelShell = ModelShell<SimulationDomain>;
 
     struct UnitModel { 
         int m_Health = 100; 
@@ -44,15 +44,15 @@ namespace crg::shell::test {
 // 2. STRICT ENFORCEMENT REGISTRATION
 // =============================================================================
 
-CRG_DECLARE_DOMAIN(crg::shell::test::SimulationPartition)
+CRG_DECLARE_DOMAIN(crg::shell::test::SimulationDomain)
 // IHealthController also gets a hash so DomainTraits::TypeKey<IHealthController> resolves.
-CRG_DECLARE_DOMAIN_MODELS(crg::shell::test::SimulationPartition,
+CRG_DECLARE_DOMAIN_MODELS(crg::shell::test::SimulationDomain,
     crg::shell::test::UnitModel,
     crg::shell::test::GhostModel,
     crg::shell::test::IHealthController)
 
 namespace crg::shell {
-    template<> struct ModelShellMutabilityTraits<crg::shell::test::SimulationPartition> {
+    template<> struct ModelShellMutabilityTraits<crg::shell::test::SimulationDomain> {
         static constexpr bool IsMutable = true;
     };
 }
@@ -87,7 +87,7 @@ namespace crg::shell::test {
     };
 
     // Binding the templated plugin to the specific model
-    CapabilityBinding<SimulationPartition, UnitModel, ArmorPiercingLogic> s_UnitLogicBinding;
+    CapabilityBinding<SimulationDomain, UnitModel, ArmorPiercingLogic> s_UnitLogicBinding;
 }
 
 // =============================================================================

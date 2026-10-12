@@ -19,27 +19,27 @@
 #include "crg/models/domain_traits.hpp"
 
 namespace crg::test::ids {
-    struct IDPartitionA {};
-    struct IDPartitionB {};
+    struct IDDomainA {};
+    struct IDDomainB {};
 
     struct MockModelX {};
     struct MockModelY {};
     struct MockModelZ {};
 }
 
-CRG_DECLARE_DOMAIN(crg::test::ids::IDPartitionA)
-CRG_DECLARE_DOMAIN(crg::test::ids::IDPartitionB)
-CRG_DECLARE_DOMAIN_MODELS(crg::test::ids::IDPartitionA,
+CRG_DECLARE_DOMAIN(crg::test::ids::IDDomainA)
+CRG_DECLARE_DOMAIN(crg::test::ids::IDDomainB)
+CRG_DECLARE_DOMAIN_MODELS(crg::test::ids::IDDomainA,
     crg::test::ids::MockModelX,
     crg::test::ids::MockModelY)
-CRG_DECLARE_DOMAIN_MODELS(crg::test::ids::IDPartitionB,
+CRG_DECLARE_DOMAIN_MODELS(crg::test::ids::IDDomainB,
     crg::test::ids::MockModelZ)
 
 TEST_CASE("Models: DenseID and ModelToken Integrity", "[models][id]") {
     using namespace crg::test::ids;
     using namespace crg::models;
-    using StoreA = ::crg::core::DenseIndexStore<IDPartitionA>;
-    using StoreB = ::crg::core::DenseIndexStore<IDPartitionB>;
+    using StoreA = ::crg::core::DenseIndexStore<IDDomainA>;
+    using StoreB = ::crg::core::DenseIndexStore<IDDomainB>;
 
     // Refresh both stores so the NodeLink-fed chains are linearized into
     // hash → slot directories before any FromType/FromKey lookup.
@@ -47,8 +47,8 @@ TEST_CASE("Models: DenseID and ModelToken Integrity", "[models][id]") {
     StoreB::Refresh();
 
     SECTION("1. Deterministic Allocation (Idempotency)") {
-        auto token1 = ModelToken<IDPartitionA>::FromType<MockModelX>();
-        auto token2 = ModelToken<IDPartitionA>::FromType<MockModelX>();
+        auto token1 = ModelToken<IDDomainA>::FromType<MockModelX>();
+        auto token2 = ModelToken<IDDomainA>::FromType<MockModelX>();
 
         REQUIRE(token1.IsValid());
         // Two FromType calls on the same model must yield the same slot —
@@ -57,8 +57,8 @@ TEST_CASE("Models: DenseID and ModelToken Integrity", "[models][id]") {
     }
 
     SECTION("2. Distinct Models Get Distinct Slots") {
-        auto tokenX = ModelToken<IDPartitionA>::FromType<MockModelX>();
-        auto tokenY = ModelToken<IDPartitionA>::FromType<MockModelY>();
+        auto tokenX = ModelToken<IDDomainA>::FromType<MockModelX>();
+        auto tokenY = ModelToken<IDDomainA>::FromType<MockModelY>();
 
         REQUIRE(tokenX.IsValid());
         REQUIRE(tokenY.IsValid());
@@ -68,14 +68,14 @@ TEST_CASE("Models: DenseID and ModelToken Integrity", "[models][id]") {
     SECTION("3. Domain Isolation (Zero Cross-Talk)") {
         // Models belong to exactly one domain. Each store is independent.
         // MockModelX/Y live in A; MockModelZ lives in B.
-        auto tokenA = ModelToken<IDPartitionA>::FromType<MockModelX>();
-        auto tokenB = ModelToken<IDPartitionB>::FromType<MockModelZ>();
+        auto tokenA = ModelToken<IDDomainA>::FromType<MockModelX>();
+        auto tokenB = ModelToken<IDDomainB>::FromType<MockModelZ>();
 
         REQUIRE(tokenA.IsValid());
         REQUIRE(tokenB.IsValid());
 
         // B does not know MockModelX (it belongs to A only).
-        auto crossLookup = ModelToken<IDPartitionB>::FromType<MockModelX>();
+        auto crossLookup = ModelToken<IDDomainB>::FromType<MockModelX>();
         REQUIRE_FALSE(crossLookup.IsValid());
     }
 }

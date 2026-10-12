@@ -9,10 +9,8 @@
 #include "crg/core/hash.hpp"
 
 namespace crg::discovery {
-
     template<class T>
     struct UniversalAnchor;
-
 }
 
 #if CRG_PLUGINS_ENABLED
@@ -24,21 +22,38 @@ namespace crg::discovery {
     // The static instance is mandatory: it triggers NodeLink::NodeLink() so the anchor
     // self-registers into PluginLocalStorage<AnchorLink>::s_LocalHead.  Without it the
     // AnchorLink chain is empty and Mass Transfer is a silent no-op.
-    #define CRG_DEFINE_UNIVERSAL_ANCHOR(...) \
+    #define CRG_INTERNAL_DEFINE_UNIVERSAL_ANCHOR(...) \
         template struct ::crg::discovery::UniversalAnchor<__VA_ARGS__>; \
         namespace { \
             [[maybe_unused]] static const ::crg::discovery::UniversalAnchor<__VA_ARGS__> \
                 CRG_ANCHOR_PASTE(s_crg_anchor_registration_, __COUNTER__) {}; \
+            [[maybe_unused]] static const ::crg::discovery::UniversalAnchorSynchronizer<__VA_ARGS__> \
+                CRG_ANCHOR_PASTE(s_crg_sync_registration_, __COUNTER__) {}; \
         }
 #else
     #include "crg/discovery/universal_anchor_monolith.inl"
 
-    #define CRG_DEFINE_UNIVERSAL_ANCHOR(T)
+    #define CRG_INTERNAL_DEFINE_UNIVERSAL_ANCHOR(T)
 #endif
 
-#define CRG_DECLARE_UNIVERSAL_NODE_ANCHOR(T)                              \
+#define CRG_DECLARE_NODE_LINK(T)                              \
     CRG_INTERNAL_DECLARE_HASH_CUSTOM(T*, #T "*")                          \
     CRG_INTERNAL_DECLARE_HASH_CUSTOM(std::vector<const T*>, "vec_" #T)
 
+#define CRG_DEFINE_NODE_LINK(T) \
+    CRG_INTERNAL_DEFINE_UNIVERSAL_ANCHOR(T*) \
+    CRG_INTERNAL_DEFINE_UNIVERSAL_ANCHOR(std::vector<const T*>)
+
+// Shared state: one object per type, shared by every module that defines it.
+// Unlike a node link it is plain data: no chain, no enumeration.
+#define CRG_DECLARE_SHARED_STATE(T)     CRG_INTERNAL_DECLARE_HASH_CUSTOM(T, #T)
+
+#define CRG_DEFINE_SHARED_STATE(T)     CRG_INTERNAL_DEFINE_UNIVERSAL_ANCHOR(T)
+
+namespace crg::discovery {
+    template<class T>
+    T& GetSharedState() { return UniversalAnchor<T>::Get(); }
+}
+
 #define CRG_INTERNAL_DECLARE_UNIVERSAL_DOMAIN_ANCHOR(TDomain)       \
-    CRG_DECLARE_UNIVERSAL_NODE_ANCHOR(::crg::discovery::DomainArenaPopulator<TDomain>)
+    CRG_DECLARE_NODE_LINK(::crg::discovery::DomainArenaPopulator<TDomain>)

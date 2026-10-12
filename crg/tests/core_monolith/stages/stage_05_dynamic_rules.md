@@ -46,6 +46,44 @@ auto gate = CapabilityRouter<MyDomain>::Find<IFireControl>(handle, IFireControl:
 `Condition(ctx)` is true — "early exit", not a full scan-and-score. A candidate with no `Config`
 (no `Condition`) always matches, so it works as a fallback/default entry when placed last.
 
+## Custom Sorting (Optional)
+By default, the `EarlyExit` cell evaluates capabilities in the exact order they are registered in the `CapabilityBinding`. If your architecture requires sorting these rules based on configuration data (e.g., dynamically prioritizing candidates regardless of their binding order), you can specialize `DynamicRuleTraits`.
+
+```cpp
+// 1. Add a sorting key to your config
+struct SortedThreatConfig {
+    int m_MinThreat{ 0 };
+    int m_Priority{ 0 };
+    bool Condition(const IFireControl::RuleContext& ctx) const {
+        return ctx.m_ThreatLevel >= m_MinThreat;
+    }
+};
+
+// 2. Specialize the optional trait
+namespace crg::routing {
+    template<>
+    struct DynamicRuleTraits<MyDomain, IFireControl> {
+        // Unlocks strongly-typed GetConfig() in the rules
+        using ConfigBaseType = SortedThreatConfig;
+
+        static void SortRules(std::vector<DynamicRule<MyDomain, IFireControl>>& rules) {
+            std::stable_sort(rules.begin(), rules.end(), [](const auto& a, const auto& b) {
+                const auto* cfgA = a.GetConfig();
+                const auto* cfgB = b.GetConfig();
+
+                // Fallbacks (no Config) yield nullptr
+                int prioA = cfgA ? cfgA->m_Priority : -1;
+                int prioB = cfgB ? cfgB->m_Priority : -1;
+
+                return prioA > prioB;
+            });
+        }
+    };
+}
+```
+
+With this trait defined, the framework automatically sorts the cell's `m_DynamicRules` upon cache refresh. Fallbacks can safely be identified via a null pointer check on `GetConfig()`.
+
 ## Other dispatch-cell strategies live elsewhere
 This stage keeps only the default `DispatchCell` (EarlyExit) — the shape every prior stage
 already relies on implicitly. The alternative strategies are covered separately:

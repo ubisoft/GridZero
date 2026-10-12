@@ -11,6 +11,10 @@ specialization with the canonical CRG actions:
   and the per-domain `CapabilityRouter` dispatch table (host's storage,
   redirected via the still-open cross-binary anchor).
 
+`OnPluginLoad` fires from `SpliceTopology` when the chain joined a host chain,
+and from `LinkStorage` (after every module's splice) when it did not.
+`OnPluginUnload` fires from `UnspliceTopology`.
+
 User code can override the macro body when a domain needs additional reactions
 (custom indices, observers, etc.).
 

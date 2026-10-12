@@ -12,6 +12,23 @@ The pointer plumbing (Splice / Unsplice / ClosePortal) is centralized in
 `chain_splicer.hpp` — a single source of truth for the cross-binary splicing
 protocol.
 
+## Phases
+
+`BindStorage` and `UnbindStorage` do nothing here: the memory anchors belong to
+`UniversalAnchorSynchronizer`. The chain itself is handled by three phases:
+
+- `SpliceTopology` — `ChainSplicer::Splice`; on success, `OnPluginLoad`.
+- `LinkStorage` — if the chain did not join a host chain, `OnPluginLoad` now, once
+  every module's splice has run, so the rebuild also sees the other modules.
+- `UnspliceTopology` — a joined chain is cleared, unspliced, `OnPluginUnload`, then
+  the portal is closed. A chain that did not join closes its portal first and then
+  runs `OnPluginUnload`, so the rebuild no longer reaches its own nodes.
+
+"Joined" means `ChainSplicer::IsJoined()`: `Splice()` succeeded. It is **not** the
+same as `IsLinkedToHost()`: `Splice()` sets the remote-target redirect before it can
+still fail (no local node, or the chain is already the host's), so a failed splice
+leaves the redirect set and the chain not joined.
+
 ## Per-domain user hook
 
 The post-change reaction is centralized per *domain* (not per chain type) via

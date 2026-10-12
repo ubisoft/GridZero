@@ -8,5 +8,6 @@
 #include "crg/discovery/arena_populator.hpp"
 #include "crg/discovery/sync_node.hpp"
 #include "crg/discovery/domain_synchronizer.hpp"
+#include "crg/discovery/universal_anchor_synchronizer.hpp"
 #include "crg/discovery/universal_anchor.hpp"
 #include "crg/discovery/node_link.hpp"

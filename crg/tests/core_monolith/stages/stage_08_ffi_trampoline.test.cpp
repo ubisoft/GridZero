@@ -117,7 +117,7 @@ namespace {
     struct MockNodeList : crg::discovery::NodeLink<MockNodeList, IMockNode> {};
 }
 
-CRG_DECLARE_UNIVERSAL_NODE_ANCHOR(MockNodeList)
+CRG_DECLARE_NODE_LINK(MockNodeList)
 
 TEST_CASE("Stage 08 — NodeLink self-registration requires C++ constructor (no C-ABI path)", "[stage08][ffi]") {
     // The NodeLink constructor does static_cast<TNode*>(this) — CRTP.

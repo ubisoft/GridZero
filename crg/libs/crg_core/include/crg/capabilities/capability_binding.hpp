@@ -68,6 +68,10 @@ namespace crg::capabilities {
         using Context       = ::crg::routing::ContextTypeOf<TDomain, Contract>;
         using Arena         = ::crg::routing::TensorArena<TDomain, Contract>;
 
+        void ForceAnchor() const {
+            Arena::ForceAnchor();
+        }
+
         void FillArena(::crg::models::DenseModelID<TDomain> denseId) const {
             auto& arena = Arena::Get();
             const std::size_t baseIdx = static_cast<std::size_t>(denseId.GetValue()) * Space::Volume;
@@ -100,6 +104,10 @@ namespace crg::capabilities {
         void ClearArena() const {
             Arena::Get().clear();
         }
+
+        void SortArena() const {
+            Arena::SortCells();
+        }
     };
 
     template<class TDomain, class TModel, template<class...> class... TCapabilities>
@@ -117,12 +125,20 @@ namespace crg::capabilities {
         static constexpr std::size_t VolOf = CapSpace<TDomain, TModel, TCap>::Volume;
 
         struct Unit : public CapabilityNode<TDomain, TModel, TCapabilities, std::make_index_sequence<VolOf<TCapabilities>>>... {
+            Unit() {
+                CRG_PLUGINS_ENABLED_ONLY(
+                    (CapabilityNode<TDomain, TModel, TCapabilities, std::make_index_sequence<VolOf<TCapabilities>>>::ForceAnchor(), ...);
+                )
+            }
             void Fill(DenseID denseId) const {
                 (CapabilityNode<TDomain, TModel, TCapabilities, std::make_index_sequence<VolOf<TCapabilities>>>::FillArena(denseId), ...);
             }
             void Clear() const {
                 (CapabilityNode<TDomain, TModel, TCapabilities, std::make_index_sequence<VolOf<TCapabilities>>>::ClearArena(), ...);
             }
+            void Sort() const {
+                (CapabilityNode<TDomain, TModel, TCapabilities, std::make_index_sequence<VolOf<TCapabilities>>>::SortArena(), ...);
+            } 
         } m_Unit{};
 
         // Must carry the same full-name pointer as CRG_DDM_BIND's ModelNode (model_key.hpp)
@@ -156,6 +172,10 @@ namespace crg::capabilities {
         void Clear() override {
             m_Unit.Clear();
         }
+
+        void Sort() override {
+            m_Unit.Sort();
+        } 
     };
 
     // ─── TModel = TypeList<TModels...> — fan out across every listed model ───────

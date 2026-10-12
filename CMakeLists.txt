@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.15)
 project(GridZero)
 
+# Include the GridZero build system API
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/crg_plugin_api.cmake)
+
+enable_testing()
+
 # =============================================================================
 # GridZero - public tier (Apache 2.0). Header-only crg_core.
 # The WASM backend was moved into the protected tier (non-public).
@@ -43,10 +48,22 @@ add_subdirectory(crg/libs/crg_core)
 
 # OFF when included as submodule by gridzero-protected (which owns the superset test target)
 option(CRG_BUILD_PUBLIC_TESTS "Build public-tier test suite" ON)
+
 if(CRG_BUILD_PUBLIC_TESTS)
     add_subdirectory(crg/tests)
 endif()
 
-if(CRG_BUILD_BENCHMARKS)
+# The demo needs raylib / imgui / rlImGui under external/, which are neither in
+# the repository nor fetched by bootstrap_deps.sh: opt-in only, so a plain
+# configure (CI, a fresh GitHub clone) never depends on them.
+option(CRG_BUILD_DEMO "Build the GridZero demo (requires raylib, imgui and rlImGui under external/)" OFF)
+
+# Build benchmarks if explicitly requested OR when building the demo (it
+# includes crg/benchmarks)
+if(CRG_BUILD_BENCHMARKS OR CRG_BUILD_DEMO)
     add_subdirectory(crg/benchmarks)
+endif()
+
+if(CRG_BUILD_DEMO)
+    add_subdirectory(demo)
 endif()

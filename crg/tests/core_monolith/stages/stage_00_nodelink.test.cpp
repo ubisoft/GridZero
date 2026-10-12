@@ -77,12 +77,3 @@ TEST_CASE("Stage 00 — Visit is cancellable: returning false stops early", "[st
     });
     REQUIRE(count == 1);
 }
-
-TEST_CASE("Stage 00 — RefreshCache is the DLL hot-reload hook", "[stage00][discovery]") {
-    // In monolithic mode, RefreshCache re-walks the static chain — same result.
-    // Its purpose is to re-linearize after a DLL is loaded or unloaded.
-    IGreeterList::RefreshCache();
-    int count = 0;
-    IGreeterList::Visit([&count](IGreeterList&) { ++count; });
-    REQUIRE(count == 2);
-}

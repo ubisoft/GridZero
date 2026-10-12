@@ -18,14 +18,14 @@ using namespace crg::models;
 // =============================================================================
 namespace crg::models::test {
     struct SensorUpdate {};
-    struct RoboticsPartition {};
+    struct RoboticsDomain {};
 }
 
 // =============================================================================
 // 2. STRICT REGISTRATION
 // =============================================================================
-CRG_DECLARE_DOMAIN(crg::models::test::RoboticsPartition)
-CRG_DECLARE_DOMAIN_MODELS(crg::models::test::RoboticsPartition,
+CRG_DECLARE_DOMAIN(crg::models::test::RoboticsDomain)
+CRG_DECLARE_DOMAIN_MODELS(crg::models::test::RoboticsDomain,
     crg::models::test::SensorUpdate)
 
 // =============================================================================
@@ -36,10 +36,10 @@ namespace crg::models::test {
     TEST_CASE("Domain Identity: Governance & Traits", "[models][domain]") {
         
         SECTION("Domain Topology (Identity)") {
-            constexpr u64 expectedHash = ::crg::hash::HashString("crg::models::test::RoboticsPartition");
+            constexpr u64 expectedHash = ::crg::hash::HashString("crg::models::test::RoboticsDomain");
             
             // Evaluated 100% at compile-time. Zero runtime cost.
-            STATIC_REQUIRE(DomainTraits<RoboticsPartition>::Identity == expectedHash);
+            STATIC_REQUIRE(DomainTraits<RoboticsDomain>::Identity == expectedHash);
         }
 
         SECTION("Model Identity (TypeKey)") {
@@ -48,7 +48,7 @@ namespace crg::models::test {
             constexpr u64 expectedHash = ::crg::hash::HashString("crg::models::test::SensorUpdate");
 
             // Evaluated 100% at compile-time. Zero runtime cost.
-            STATIC_REQUIRE(DomainTraits<RoboticsPartition>::template TypeKey<SensorUpdate> == expectedHash);
+            STATIC_REQUIRE(DomainTraits<RoboticsDomain>::template TypeKey<SensorUpdate> == expectedHash);
         }
     }
 }

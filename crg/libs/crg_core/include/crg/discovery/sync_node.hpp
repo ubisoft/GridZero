@@ -8,9 +8,6 @@
 #include "crg/discovery/plugin_local_node.hpp"
 
 #if CRG_PLUGINS_ENABLED
-
-#include "crg/discovery/universal_anchor.hpp"
-
 namespace crg::host {
     struct HostDescriptor;
     extern "C" struct CRG_Context;
@@ -25,15 +22,28 @@ namespace crg::discovery {
 
     struct ISynchronizer {
         virtual ~ISynchronizer() = default;
-        virtual void OnPluginPreLoad(::crg::host::CRG_Context&) {}
-        virtual void OnPluginLoad(::crg::host::CRG_Context& ctx) = 0;
-        virtual void OnPluginUnload() = 0;
+
+        // Phase 1: Establish memory bridges for vectors and raw data
+        virtual void BindStorage(::crg::host::CRG_Context& ctx) {}
+
+        // Phase 2: Insert nodes into the chain and populate caches
+        virtual void SpliceTopology(::crg::host::CRG_Context& ctx) {}
+
+        // Phase 2b (probe): after every module record is visible, link anchors to state owned by other loaded modules
+        virtual void LinkStorage(::crg::host::CRG_Context& ctx) {}
+
+        // Phase 2c: before this module leaves, hand its state over to the modules still linked to it
+        virtual void UnlinkStorage() {}
+
+        // Phase 3: Purge arena data and sever the chain links
+        virtual void UnspliceTopology() {}
+
+        // Phase 4: Reset memory pointers and cut the data bridges
+        virtual void UnbindStorage() {}
     };
 
     struct ISyncNode : PluginLocalNode<ISyncNode, ISynchronizer> {};
 
 }
-
-CRG_DECLARE_UNIVERSAL_NODE_ANCHOR(::crg::discovery::ISyncNode)
 
 #endif

@@ -8,6 +8,7 @@
 #include "crg/core/hash.hpp"
 #include "crg/core/types.hpp"
 #include "crg/discovery/universal_anchor.hpp"
+#include "crg/discovery/plugin_manifest.hpp"
 #include "crg/models/dense_id.hpp"
 #include "crg/models/model_node.hpp"
 #include <vector>
@@ -45,45 +46,11 @@ namespace crg::core {
         static void Refresh() {
             State& state = Anchor::Get();
             Chain::RefreshCache();
+            // Every loaded module's models, this one included, in the order of the plugin record chain: all modules rebuilding
+            // from the same membership number the slots the same way.
+            ::crg::discovery::PluginRecordNode::VisitSegments<Chain, true>([&state](const Chain& node) { Add(state, node); });
             for (const auto* node : Chain::GetCache()) {
-                const u64 hash = node->GetHash();
-                const u32 existing = FindIn(state, hash);
-                if (existing != InvalidDenseSlot) {
-                    // A duplicate hash means either:
-                    //   (a) the same model type registered twice — harmless dedup, or
-                    //   (b) two DISTINCT model types whose truncated leaf name collides
-                    //       (e.g. studio::Scout and mod::Scout both hash to "Scout") — a
-                    //       real identity clash that would otherwise silently merge two
-                    //       models into one slot.
-                    // Names here are the FULL #ModelType strings (see CRG_DECLARE_MODEL,
-                    // model_key.hpp) — not the leaf the hash is derived from — precisely so
-                    // (a) and (b) are distinguishable: same full name -> (a), different full
-                    // name -> (b). This only catches the co-compiled case (debug-only); a
-                    // clash between independently-shipped plugins/language guests needs a
-                    // load-time check instead, since only the hash crosses that boundary.
-                    // assert() takes a static string, so the two colliding full names can't
-                    // be embedded in its message — print them to stderr right before the
-                    // assert fires, and only then, so harmless dedup (the common case) stays
-                    // silent.
-                    CRG_HASH_NAME_ENABLED_ONLY(
-                        if (state.m_Names[existing] != node->GetName()) {
-                            std::fprintf(stderr,
-                                "[CRG] model identity collision on hash=%llx: existing='%.*s' vs new='%.*s'\n",
-                                (unsigned long long)hash,
-                                (int)state.m_Names[existing].size(), state.m_Names[existing].data(),
-                                (int)node->GetName().size(), node->GetName().data());
-                        }
-                        CRG_ASSERT(state.m_Names[existing] == node->GetName(),
-                            "CRG: model identity collision — two distinct model types share "
-                            "the same leaf-truncated hash. Rename one of the colliding types, "
-                            "move one to a different domain, or provide an explicit hash "
-                            "override. See the stderr line just printed for the two full "
-                            "colliding type names.");
-                    )
-                    continue;
-                }
-                state.m_Hashes.push_back(hash);
-                CRG_HASH_NAME_ENABLED_ONLY(state.m_Names.push_back(node->GetName());)
+                Add(state, *node);
             }
         }
 
@@ -105,6 +72,47 @@ namespace crg::core {
         static const Bootstrap& GetBootstrap() noexcept {
             static const Bootstrap s_Bootstrap;
             return s_Bootstrap;
+        }
+
+        static void Add(State& state, const Chain& node) {
+        const u64 hash = node.GetHash();
+            const u32 existing = FindIn(state, hash);
+            if (existing != InvalidDenseSlot) {
+                // A duplicate hash means either:
+                //   (a) the same model type registered twice — harmless dedup, or
+                //   (b) two DISTINCT model types whose truncated leaf name collides
+                //       (e.g. studio::Scout and mod::Scout both hash to "Scout") — a
+                //       real identity clash that would otherwise silently merge two
+                //       models into one slot.
+                // Names here are the FULL #ModelType strings (see CRG_DECLARE_MODEL,
+                // model_key.hpp) — not the leaf the hash is derived from — precisely so
+                // (a) and (b) are distinguishable: same full name -> (a), different full
+                // name -> (b). This only catches the co-compiled case (debug-only); a
+                // clash between independently-shipped plugins/language guests needs a
+                // load-time check instead, since only the hash crosses that boundary.
+                // assert() takes a static string, so the two colliding full names can't
+                // be embedded in its message — print them to stderr right before the
+                // assert fires, and only then, so harmless dedup (the common case) stays
+                // silent.
+                CRG_HASH_NAME_ENABLED_ONLY(
+                    if (state.m_Names[existing] != node.GetName()) {
+                        std::fprintf(stderr,
+                            "[CRG] model identity collision on hash=%llx: existing='%.*s' vs new='%.*s'\n",
+                            (unsigned long long)hash,
+                            (int)state.m_Names[existing].size(), state.m_Names[existing].data(),
+                            (int)node.GetName().size(), node.GetName().data());
+                    }
+                    CRG_ASSERT(state.m_Names[existing] == node.GetName(),
+                        "CRG: model identity collision — two distinct model types share "
+                        "the same leaf-truncated hash. Rename one of the colliding types, "
+                        "move one to a different domain, or provide an explicit hash "
+                        "override. See the stderr line just printed for the two full "
+                        "colliding type names.");
+                )
+                return;
+            }
+            state.m_Hashes.push_back(hash);
+            CRG_HASH_NAME_ENABLED_ONLY(state.m_Names.push_back(node.GetName());)
         }
 
         static u32 FindIn(const State& state, u64 hash) noexcept {

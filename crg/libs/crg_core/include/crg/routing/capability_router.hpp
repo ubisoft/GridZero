@@ -21,17 +21,6 @@
 
 namespace crg::routing {
 
-    namespace internal {
-        template<class TDomain, class TContract, class TSpace, std::size_t CellIndex, std::size_t... DimIs>
-        void ValidateCell(::crg::models::ModelToken<TDomain> token, std::index_sequence<DimIs...>);
-
-        template<class TDomain, class TContract, std::size_t... CellIs>
-        void ValidateContractForHandle(::crg::models::ModelToken<TDomain> token, std::index_sequence<CellIs...>);
-
-        template<class TDomain, class TContract>
-        void ValidateContract();
-    }
-
     template<typename TDomain>
     class CapabilityRouter {
     private:
@@ -59,29 +48,42 @@ namespace crg::routing {
 
         struct ArenaBuilder {
             ArenaBuilder() {
-                RefreshCache();
-            }
-
-            void RefreshCache() {
-                PopulatorList::Visit([](::crg::discovery::IArenaPopulator& populator) {
-                    populator.Clear();
-                });
-                PopulatorList::Visit([](::crg::discovery::IArenaPopulator& populator) {
-                    populator.Populate();
-                });
+                PopulatorList::Chain::Build();
             }
         };
 
         static ArenaBuilder& GetArenaBuilder() {
-            static ArenaBuilder s_Builder{};
+            static ArenaBuilder s_Builder;
             return s_Builder;
         }
 
-    public:
-        static void RefreshCache() {
-            GetArenaBuilder().RefreshCache();
+        // First Require<TContract>() builds the domain arenas, then (debug builds only) asserts that every
+        // cell of THIS contract's arena has a fallback. Require promises the cell exists; Find does not,
+        // since a null handle is a legitimate Find result (see Dispatch). In release an unbound cell is
+        // a null-handle call.
+        template<class TContract>
+        struct RequireGate {
+            RequireGate() {
+                GetArenaBuilder();
+                CRG_ASSERT_ENABLED_ONLY(AssertArenaFullyBound();)
+            }
+
+            static void AssertArenaFullyBound() {
+                const auto* data{ Arena<TContract>::GetData() };
+                const auto  size{ Arena<TContract>::GetSize() };
+                for (std::size_t i{ 0 }; i < size; ++i) {
+                    CRG_ASSERT(data[i].m_Fallback, "CRG Require: a cell of this contract has no binding.");
+                }
+            }
+        };
+
+        template<class TContract>
+        static RequireGate<TContract>& GetRequireGate() {
+            static RequireGate<TContract> s_Gate;
+            return s_Gate;
         }
 
+    public:
         static bool AllPopulatorsResolvable() noexcept {
             bool allResolvable = true;
             PopulatorList::Visit([&allResolvable](::crg::discovery::IArenaPopulator& populator) {
@@ -95,6 +97,7 @@ namespace crg::routing {
         static CapabilityHandle<TContract> Find(ModelToken token, TAxes... axes) {
             using Result = CapabilityHandle<TContract>;
 
+            Arena<TContract>::ForceAnchor();
             [[maybe_unused]] ArenaBuilder& triggerBuilder = GetArenaBuilder();
 
             if (!token.IsValid()) return Result{};
@@ -120,6 +123,7 @@ namespace crg::routing {
             ModelToken token, const typename FullContext<TContract>::Base& ruleContext, TAxes... axes) {
             using Result = CapabilityHandle<TContract>;
 
+            Arena<TContract>::ForceAnchor();
             [[maybe_unused]] ArenaBuilder& triggerBuilder = GetArenaBuilder();
 
             if (!token.IsValid()) return Result{};
@@ -136,6 +140,45 @@ namespace crg::routing {
             const auto& cell{ arenaData[offset] };
 
             return cell.Resolve(ruleContext);
+        }
+
+        // Require is Find() without the validity checks: it assumes a typed token and in-range enum
+        // axes, and asserts both in debug builds only.
+        // It assumes a valid token and an in-range cell: both are checked by CRG_ASSERT (debug builds
+        // only), so the release hot path is the Horner offset plus one table load. The first call builds
+        // the arenas lazily, like Find(), and in debug builds asserts the whole contract arena is bound.
+        template<class TContract, typename... TAxes,
+            std::enable_if_t<!FullContext<TContract>::RequiresContext, int> = 0>
+        static CapabilityHandle<TContract> Require(ModelToken token, TAxes... axes) {
+            Arena<TContract>::ForceAnchor();
+            [[maybe_unused]] RequireGate<TContract>& triggerGate = GetRequireGate<TContract>();
+
+            CRG_ASSERT(token.IsValid(), "CRG Require: invalid model token.");
+
+            using TSpace = typename Traits<TContract>::SpaceType;
+            const std::size_t offset{ TSpace::ComputeOffset(token.GetDenseIndex(), axes...) };
+
+            CRG_ASSERT(offset < Arena<TContract>::GetSize(), "CRG Require: cell offset outside the arena.");
+
+            typename FullContext<TContract>::Base ctx{};
+            return Arena<TContract>::GetData()[offset].Resolve(ctx);
+        }
+
+        template<class TContract, typename... TAxes,
+            std::enable_if_t<FullContext<TContract>::RequiresContext, int> = 0>
+        static CapabilityHandle<TContract> Require(
+            ModelToken token, const typename FullContext<TContract>::Base& ruleContext, TAxes... axes) {
+            Arena<TContract>::ForceAnchor();
+            [[maybe_unused]] RequireGate<TContract>& triggerGate = GetRequireGate<TContract>();
+
+            CRG_ASSERT(token.IsValid(), "CRG Require: invalid model token.");
+
+            using TSpace = typename Traits<TContract>::SpaceType;
+            const std::size_t offset{ TSpace::ComputeOffset(token.GetDenseIndex(), axes...) };
+
+            CRG_ASSERT(offset < Arena<TContract>::GetSize(), "CRG Require: cell offset outside the arena.");
+
+            return Arena<TContract>::GetData()[offset].Resolve(ruleContext);
         }
 
         // Dispatch is factored out separately because MSVC fails to deduce (axes..., func)
@@ -155,41 +198,6 @@ namespace crg::routing {
             if (!cap) return;
             std::forward<TFunc>(func)(*cap);
         }
-
-        template<class... TContracts>
-        static void ValidateAll() {
-            CRG_ASSERT_ENABLED_ONLY((internal::ValidateContract<TDomain, TContracts>(), ...));
-        }
     };
-
-    namespace internal {
-        template<class TDomain, class TContract, class TSpace, std::size_t CellIndex, std::size_t... DimIs>
-        void ValidateCell(::crg::models::ModelToken<TDomain> token, std::index_sequence<DimIs...>) {
-            auto cap = CapabilityRouter<TDomain>::template Find<TContract>(
-                token, TSpace::template GetCoordAtIndex<DimIs>(CellIndex)...);
-            CRG_ASSERT(static_cast<bool>(cap),
-                "CRG ValidateAll: a model has no binding for a contract at this cell.");
-        }
-
-        template<class TDomain, class TContract, std::size_t... CellIs>
-        void ValidateContractForHandle(::crg::models::ModelToken<TDomain> token, std::index_sequence<CellIs...>) {
-            using TSpace = typename CapabilityRoutingTraits<TDomain, TContract>::SpaceType;
-            using DimSeq = std::make_index_sequence<TSpace::Dimensions>;
-            (ValidateCell<TDomain, TContract, TSpace, CellIs>(token, DimSeq{}), ...);
-        }
-
-        template<class TDomain, class TContract>
-        void ValidateContract() {
-            using TSpace     = typename CapabilityRoutingTraits<TDomain, TContract>::SpaceType;
-            using CellSeq    = std::make_index_sequence<TSpace::Volume>;
-            using DenseStore = ::crg::core::DenseIndexStore<TDomain>;
-
-            const ::crg::u32 modelCount = DenseStore::Size();
-            for (::crg::u32 slot = 0; slot < modelCount; ++slot) {
-                ::crg::models::ModelToken<TDomain> token{ ::crg::models::DenseModelID<TDomain>{ slot } };
-                ValidateContractForHandle<TDomain, TContract>(token, CellSeq{});
-            }
-        }
-    } // namespace internal
 
 } // namespace crg::routing

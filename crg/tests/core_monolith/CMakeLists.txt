@@ -23,3 +23,6 @@ target_include_directories(Run_CoreMonolith_Tests PRIVATE
 
 # Strict monolithic mode (parity with the old behavior).
 target_compile_definitions(Run_CoreMonolith_Tests PRIVATE CRG_PLUGINS_ENABLED=0)
+
+# Registered so that ctest (and the P4 build gate) runs the stage suite.
+add_test(NAME Run_CoreMonolith_Tests COMMAND Run_CoreMonolith_Tests)

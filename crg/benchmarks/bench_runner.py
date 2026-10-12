@@ -499,20 +499,18 @@ def render_markdown(meta, bench_json, perf_counters, powermetrics, scaling, filt
 
     return "\n".join(lines)
 
-
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--build-dir", default=os.path.join(GRIDZERO_ROOT, "..", "build_bench_runner"))
     ap.add_argument("--no-build", action="store_true", help="reuse an existing build dir/binary")
     ap.add_argument("--filter", default=None, help="google-benchmark --benchmark_filter regex")
-    ap.add_argument("--min-time", default=None, help="google-benchmark --benchmark_min_time value, e.g. 1.0s")
+    ap.add_argument("--min-time", default=None, help="google-benchmark --benchmark_min_time value")
+    ap.add_argument("--output", default=None, help="Exact output path for the JSON sidecar (overrides --out-dir)")
     ap.add_argument("--repetitions", default=None, type=int,
-                     help="google-benchmark --benchmark_repetitions; auto-enables --benchmark_report_aggregates_only=true")
+                     help="google-benchmark --benchmark_repetitions")
     ap.add_argument("--scaling", action="store_true", help="also time the DenseIndexStore scaling TU in isolation")
     ap.add_argument("--out-dir", default="results/", help="where to write bench_<host>_<ts>.md/.json")
-    ap.add_argument("--define", action="append", default=[], metavar="KEY=VAL",
-                     help="extra -DKEY=VAL forwarded to the cmake configure step (repeatable), "
-                          "e.g. --define CRG_PLUGINS_ENABLED=1")
+    ap.add_argument("--define", action="append", default=[], metavar="KEY=VAL")
     args = ap.parse_args()
 
     build_dir = os.path.abspath(args.build_dir)
@@ -528,9 +526,15 @@ def main():
 
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base = f"bench_{meta['hostname']}_{stamp}"
-    os.makedirs(args.out_dir, exist_ok=True)
-    md_path = os.path.join(args.out_dir, base + ".md")
-    json_path = os.path.join(args.out_dir, base + ".json")
+    
+    if args.output:
+        json_path = os.path.abspath(args.output)
+        os.makedirs(os.path.dirname(json_path) or ".", exist_ok=True)
+        md_path = json_path.replace(".json", ".md") if json_path.endswith(".json") else json_path + ".md"
+    else:
+        os.makedirs(args.out_dir, exist_ok=True)
+        md_path = os.path.join(args.out_dir, base + ".md")
+        json_path = os.path.join(args.out_dir, base + ".json")
 
     sidecar = {
         "machine": meta,
@@ -549,8 +553,7 @@ def main():
     print(f"\nOK -> {md_path}")
     print(f"OK -> {json_path}")
     
-    # Auto-trigger aggregation if a specific output directory was provided
-    if args.out_dir != ".":
+    if args.out_dir != "." and not args.output:
         agg_script = os.path.join(SCRIPT_DIR, "bench_aggregate.py")
         if os.path.exists(agg_script):
             print(f"\n>> Auto-triggering aggregation in {args.out_dir}...")
@@ -558,9 +561,8 @@ def main():
             subprocess.run([sys.executable, agg_script, "--dir", args.out_dir, "--out", agg_out])
         else:
             print("\nSend both files back for aggregation (bench_aggregate.py not found locally).")
-    else:
+    elif not args.output:
         print("\nSend both files back for aggregation (bench_aggregate.py).")
-
 
 if __name__ == "__main__":
     main()

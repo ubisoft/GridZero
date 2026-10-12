@@ -32,7 +32,17 @@ namespace crg::shell {
 namespace crg {
 
     template<typename T>
-    using TryInvokeResult_t = std::conditional_t<std::is_void_v<T>, void, std::optional<T>>;
+    struct IsOptionalImpl : std::false_type {};
+
+    template<typename T>
+    struct IsOptionalImpl<std::optional<T>> : std::true_type {};
+
+    template<typename T>
+    inline constexpr bool IsOptional = IsOptionalImpl<T>::value;
+
+    template<typename T>
+    using TryInvokeResult_t = std::conditional_t<std::is_void_v<T>, void,
+        std::conditional_t<IsOptional<T>, T, std::optional<T>>>;
 
     template <typename...>
     constexpr bool always_false_v = false;

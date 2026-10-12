@@ -20,12 +20,14 @@ The corresponding define macros follow the same split:
 
 ## Internal macro: CRG_INSTANTIATE_CAPABILITY_DOMAIN_ANCHORS
 
-When `CRG_PLUGINS_ENABLED`, this macro emits four explicit instantiations per binary (host + each plugin):
+When `CRG_PLUGINS_ENABLED`, this macro emits five explicit instantiations per binary (host + each plugin):
 
 1. `SyncAgentHolder<TDomain>` — holds the per-domain sync agent static members.
 2. `UniversalAnchor<DomainArenaPopulator<TDomain>*>` — single-pointer anchor (remote target).
 3. `UniversalAnchor<std::vector<...>>` — vector anchor (all registered populators).
 4. `DomainAnchorRegistry<TDomain>` — whose `static inline UniversalAnchor<...>` members construct one instance per binary. These constructors run `NodeLink::NodeLink()` and populate `internal::PluginLocalStorage<AnchorLink>::s_LocalHead`. Without this instantiation the AnchorLink chain stays empty in every binary and Mass Transfer silently degrades (cache.size() == 1 forever).
+
+5. `CRG_DEFINE_NODE_LINK(ModelNodeBase<TDomain>)` — registers, in the AnchorLink list of each binary, the cell of its own model-node segment. This is what makes the models a module declares discoverable from the plugin record chain alone: a model with no capability bound (declared only) is found the same way as a bound one. A module owns its own segment; nothing is shared, so a leaving module takes only its own models with it.
 
 When `CRG_PLUGINS_ENABLED` is false, both macros expand to nothing (monolithic build, no plugin topology to synchronize).
 

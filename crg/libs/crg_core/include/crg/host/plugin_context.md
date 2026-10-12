@@ -6,4 +6,4 @@
 
 ## No cleanup-action table
 
-There is no table of cleanup actions in `CRG_Context`. Each `ISynchronizer` carries its own `ChainSplicer<TNode>` static-inline (one per binary). The splicer is captured during `OnPluginLoad` and consumed during `OnPluginUnload`. See `discovery/chain_splicer.hpp` for the mechanism.
+There is no table of cleanup actions in `CRG_Context`. Each `ISynchronizer` carries its own `ChainSplicer<TNode>` static-inline (one per binary). The splicer state is recorded by `SpliceTopology` and consumed by `UnspliceTopology`. See `discovery/chain_splicer.hpp` for the mechanism.

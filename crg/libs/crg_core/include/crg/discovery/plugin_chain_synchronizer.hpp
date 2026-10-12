@@ -22,21 +22,46 @@ namespace crg::discovery {
         using NodeType = TNode<TDomain>;
         using Splicer  = internal::ChainSplicer<NodeType>;
 
-        void OnPluginLoad(::crg::host::CRG_Context& ctx) override {
+        void BindStorage(::crg::host::CRG_Context& ctx) override {
+            // Nothing to do here: memory anchors are handled by UniversalAnchorSynchronizer
+        }
+
+        void SpliceTopology(::crg::host::CRG_Context& ctx) override {
+            // Phase 2: Topology splicing and cache rebuild 
+            // Executed after memory anchors are securely established
             if (Splicer::Splice(*ctx.m_HostDescriptor)) {
                 DomainSynchronizer<TDomain>::OnPluginLoad();
             }
         }
 
-        void OnPluginUnload() override {
-            // The cross-binary redirect stays open across the user hook so
-            // any cache writes performed by OnPluginUnload land in the
-            // host's storage, not the plugin's. ClosePortal severs the
-            // redirect afterwards.
-            if (Splicer::Unsplice()) {
-                DomainSynchronizer<TDomain>::OnPluginUnload();
+        // A module whose chain is not spliced into a host chain still changes what every loaded module can see: rebuild
+        // once the storage is linked, so the domain reflects it without waiting for a first use.
+        void LinkStorage(::crg::host::CRG_Context& ctx) override {
+            if (!Splicer::IsJoined()) {
+                DomainSynchronizer<TDomain>::OnPluginLoad();
             }
+        }
+
+        void UnspliceTopology() override {
+            // Phase 3: Cleanup and topology unsplicing 
+            // Executed while memory anchors are still active
+            if (Splicer::CanUnsplice()) {
+                DomainSynchronizer<TDomain>::Clear();
+                Splicer::Unsplice();
+                DomainSynchronizer<TDomain>::OnPluginUnload();
+                Splicer::ClosePortal();
+                return;
+            }
+
+            // Not spliced: close this module's own chain first, so the rebuild no longer reaches its nodes.
+            // IsJoined() is false here (a joined chain takes the branch above), and a failed Splice() may still have
+            // left the redirect set, so the rebuild must run regardless of IsLinkedToHost().
             Splicer::ClosePortal();
+            DomainSynchronizer<TDomain>::OnPluginUnload();
+        }
+
+        void UnbindStorage() override {
+            // Nothing to do here: anchor severing is handled by UniversalAnchorSynchronizer
         }
     };
 

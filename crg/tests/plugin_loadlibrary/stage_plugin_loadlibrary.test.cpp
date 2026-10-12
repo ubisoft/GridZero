@@ -39,11 +39,18 @@
 // ═════════════════════════════════════════════════════════════════════════════
 
 #include "catch.hpp"
+#include <algorithm>
+#include <cstring>
+#include <vector>
 #include "crg/crg.hpp"
+#include "greeter_common.hpp"
+#include "shared_state_common.hpp"
+#include "order_common.hpp"
 #include "crg/plugin/plugin.hpp"
 #include "crg/host/host_descriptor.hpp"
+#include "crg/discovery/plugin_manifest.hpp"
+#include "crg/discovery/plugin_chain_synchronizer.hpp"
 
-// ─── OS dynamic-library helpers ───────────────────────────────────────────────
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
@@ -59,33 +66,118 @@ static void*        GetSym(DylibHandle h, const char* n) { return ::dlsym(h, n);
 static void         CloseDylib(DylibHandle h) { ::dlclose(h); }
 #endif
 
-// ─── Shared domain/model/contract (same declarations as plugin_greeter.cpp) ──
-//   In a real project these live in a header shared between host and plugin.
-struct GreeterDomain {};
-CRG_DECLARE_DOMAIN(GreeterDomain)
 CRG_DEFINE_DOMAIN(GreeterDomain)
+CRG_DEFINE_NODE_LINK(GreeterObserverNode)
 
-struct IGreet {
-    struct Params { const char* m_Out{ nullptr }; };
-};
+TEST_CASE("Stage plugin_loadlibrary — plugin hot-plugs capabilities, dynamic rules, and NodeLinks", "[plugin_loadlibrary]") {
+    using namespace crg;
+    using namespace crg::models;
+    using namespace crg::routing;
+    using namespace crg::capabilities;
+    using namespace crg::discovery;
 
-template<> struct crg::routing::CapabilityRoutingTraits<GreeterDomain, IGreet> {
-    using SpaceType = crg::routing::CapabilitySpace<>;
-};
+    auto token = ModelToken<GreeterDomain>::FromType<English>();
 
-struct English {};
-struct French  {};
+    ::crg::host::HostDescriptor hostDesc;
+    hostDesc.m_HostAnchorsHead = ::crg::discovery::AnchorLink::GetLocalHead();
 
-CRG_DECLARE_DOMAIN_MODELS(GreeterDomain,
-    English,
-    French)
+    ::crg::host::CRG_Context ctx{};
+    ctx.m_HostDescriptor = &hostDesc;
 
-// CRG_IMPLEMENT_PARTITION anchors the DenseIndexStore for this domain in
-// this TU — required exactly once per domain per binary (host side).
-CRG_IMPLEMENT_PARTITION(GreeterDomain)
+#ifndef CRG_GREETER_PLUGIN_PATH
+    FAIL("CRG_GREETER_PLUGIN_PATH not defined");
+#endif
+
+    DylibHandle dylib = OpenDylib(CRG_GREETER_PLUGIN_PATH);
+    REQUIRE(dylib != nullptr);
+
+    auto bootstrap = reinterpret_cast<crg::plugin::PluginLoader::BootstrapFn>(
+        GetSym(dylib, crg::plugin::PluginSymbols::Bootstrap));
+    REQUIRE(bootstrap != nullptr);
+
+    {
+        int pluginCount{};
+        ::crg::discovery::PluginRecordNode::Visit([&pluginCount](const auto& p) {
+            ++pluginCount;
+        });
+        REQUIRE(0 == pluginCount);
+
+        auto gate = CapabilityRouter<GreeterDomain>::Find<IGreet>(token);
+        REQUIRE(!gate);
+
+        bool foundObserver = false;
+        GreeterObserverNode::Visit([&foundObserver](const IGreeterObserver& obs) {
+            if (std::string_view(obs.GetObserverName()) == "GreeterPlugin_AsyncObserver") {
+                foundObserver = true;
+            }
+            return true;
+        });
+        REQUIRE(!foundObserver);
+    } 
+
+    bootstrap(&ctx);
+
+    {
+        int pluginCount{};
+        ::crg::discovery::PluginRecordNode::Visit([&pluginCount](const auto& p) {
+            ++pluginCount;
+        });
+        REQUIRE(1 == pluginCount);
+
+        auto gate = CapabilityRouter<GreeterDomain>::Find<IGreet>(token);
+        REQUIRE(gate);
+        IGreet::Params p{};
+        gate(p);
+        REQUIRE(std::string_view(p.m_Out) == "Hello from plugin");
+
+        bool foundObserver = false;
+        GreeterObserverNode::Visit([&foundObserver](const IGreeterObserver& obs) {
+            if (std::string_view(obs.GetObserverName()) == "GreeterPlugin_AsyncObserver") {
+                foundObserver = true;
+            }
+            return true;
+        });
+        REQUIRE(foundObserver);
+    }
+
+    {
+        IGreeterRule::RuleContext hotContext{ 10 };
+        auto ruleGate = CapabilityRouter<GreeterDomain>::Find<IGreeterRule>(token, hotContext);
+        REQUIRE(ruleGate);
+
+        IGreeterRule::Params rp{};
+        ruleGate(rp);
+        REQUIRE(rp.m_Priority == 150);
+        REQUIRE(std::string_view(rp.m_Message) == "Urgent Rule executed from Plugin");
+    }
+
+    auto shutdown = reinterpret_cast<crg::plugin::PluginLoader::ShutdownFn>(
+        GetSym(dylib, crg::plugin::PluginSymbols::Shutdown));
+    REQUIRE(shutdown != nullptr);
+    shutdown();
+
+    CloseDylib(dylib);
+
+    {
+        int pluginCount{};
+        ::crg::discovery::PluginRecordNode::Visit([&pluginCount](const auto& p) {
+            ++pluginCount;
+        });
+        REQUIRE(0 == pluginCount);
+
+        auto gate = CapabilityRouter<GreeterDomain>::Find<IGreet>(token);
+        REQUIRE(!gate);
+
+        bool foundObserver = false;
+        GreeterObserverNode::Visit([&foundObserver](const IGreeterObserver& obs) {
+            foundObserver = true;
+            return true;
+        });
+        REQUIRE(!foundObserver);
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
-
 TEST_CASE("Stage plugin_loadlibrary — manual LoadLibrary splices plugin capabilities", "[plugin_loadlibrary]") {
     using namespace crg;
     using namespace crg::models;
@@ -118,11 +210,10 @@ TEST_CASE("Stage plugin_loadlibrary — manual LoadLibrary splices plugin capabi
     auto bootstrap = reinterpret_cast<crg::plugin::PluginLoader::BootstrapFn>(
         GetSym(dylib, crg::plugin::PluginSymbols::Bootstrap));
     REQUIRE(bootstrap != nullptr);
-    bootstrap(&ctx);
 
     // 5. Refresh so CapabilityRouter sees the newly spliced populators.
-    CapabilityRouter<GreeterDomain>::RefreshCache();
-
+    bootstrap(&ctx);
+  
     // 6. Invoke — plugin's Execute() runs, no virtual call on the Muscle path.
     {
         auto token = ModelToken<GreeterDomain>::FromType<English>();
@@ -143,15 +234,14 @@ TEST_CASE("Stage plugin_loadlibrary — manual LoadLibrary splices plugin capabi
         REQUIRE(std::string_view(p.m_Out) == "Bonjour du plugin");
     }
 
-    // 7. Shutdown + close — plugin chain spliced back out.
+    // 7. Shutdown — plugin chain spliced back out.
     auto shutdown = reinterpret_cast<crg::plugin::PluginLoader::ShutdownFn>(
         GetSym(dylib, crg::plugin::PluginSymbols::Shutdown));
     REQUIRE(shutdown != nullptr);
     shutdown();
-    CloseDylib(dylib);
 
-    // 8. Refresh again — routing tensor returns to pre-load state.
-    CapabilityRouter<GreeterDomain>::RefreshCache();
+    // 8. CloseLib
+    CloseDylib(dylib);
 
     {
         auto token = ModelToken<GreeterDomain>::FromType<English>();
@@ -159,3 +249,897 @@ TEST_CASE("Stage plugin_loadlibrary — manual LoadLibrary splices plugin capabi
         REQUIRE(!gate);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Host-side "Fallback" rule declaration to test sorting and override
+template<typename TModel>
+struct HostFallbackRule : crg::capabilities::Capability<IGreeterRule, GreeterRuleConfig> {
+    HostFallbackRule() {
+        this->m_Config.m_MinUrgency = 0; // Applies unconditionally
+        this->m_Config.m_Priority = 10;  // Low priority
+    }
+
+    static void Execute(IGreeterRule::Params& p) {
+        p.m_Message = "Fallback Rule executed from HOST";
+        p.m_Priority = 10;
+    }
+};
+
+// Bind this fallback rule to the Host
+static const crg::capabilities::CapabilityBinding<GreeterDomain, English, HostFallbackRule> s_hostFallbackRule;
+
+TEST_CASE("Stage plugin_loadlibrary — Dynamic rules sorting, fallback, and unload lifecycle", "[plugin_loadlibrary]") {
+    using namespace crg;
+    using namespace crg::models;
+    using namespace crg::routing;
+    using namespace crg::capabilities;
+
+    auto token = ModelToken<GreeterDomain>::FromType<English>();
+
+    ::crg::host::HostDescriptor hostDesc;
+    hostDesc.m_HostAnchorsHead = ::crg::discovery::AnchorLink::GetLocalHead();
+    ::crg::host::CRG_Context ctx{};
+    ctx.m_HostDescriptor = &hostDesc;
+
+    // 1. BEFORE PLUGIN LOAD
+    {
+        IGreeterRule::RuleContext hotContext{ 10 };
+        auto ruleGate = CapabilityRouter<GreeterDomain>::Find<IGreeterRule>(token, hotContext);
+        REQUIRE(ruleGate); // The Host has its own fallback rule
+
+        IGreeterRule::Params rp{};
+        ruleGate(rp);
+        REQUIRE(rp.m_Priority == 10);
+        REQUIRE(std::string_view(rp.m_Message) == "Fallback Rule executed from HOST");
+    }
+
+    // --- PLUGIN LOAD ---
+    DylibHandle dylib = OpenDylib(CRG_GREETER_PLUGIN_PATH);
+    REQUIRE(dylib != nullptr);
+    auto bootstrap = reinterpret_cast<crg::plugin::PluginLoader::BootstrapFn>(GetSym(dylib, crg::plugin::PluginSymbols::Bootstrap));
+    bootstrap(&ctx);
+
+    // 2. AFTER LOAD: Sorting favors the Plugin's rule (Priority 150 > 10)
+    {
+        IGreeterRule::RuleContext hotContext{ 10 }; // Urgency = 10 (>= 5 required by plugin)
+        auto ruleGate = CapabilityRouter<GreeterDomain>::Find<IGreeterRule>(token, hotContext);
+        REQUIRE(ruleGate);
+
+        IGreeterRule::Params rp{};
+        ruleGate(rp);
+        REQUIRE(rp.m_Priority == 150); // Plugin successfully took over
+        REQUIRE(std::string_view(rp.m_Message) == "Urgent Rule executed from Plugin");
+    }
+
+    // 3. DYNAMIC FALLBACK: If plugin condition is not met, fallback to Host
+    {
+        IGreeterRule::RuleContext lowContext{ 2 }; // Urgency = 2 (< 5, plugin rule ignored)
+        auto ruleGate = CapabilityRouter<GreeterDomain>::Find<IGreeterRule>(token, lowContext);
+        REQUIRE(ruleGate);
+
+        IGreeterRule::Params rp{};
+        ruleGate(rp);
+        REQUIRE(rp.m_Priority == 10); // Graceful fallback to Host
+        REQUIRE(std::string_view(rp.m_Message) == "Fallback Rule executed from HOST");
+    }
+
+    // --- PLUGIN UNLOAD ---
+    auto shutdown = reinterpret_cast<crg::plugin::PluginLoader::ShutdownFn>(GetSym(dylib, crg::plugin::PluginSymbols::Shutdown));
+    shutdown();
+    CloseDylib(dylib);
+
+    // 4. AFTER UNLOAD: Plugin rule removed, Host takes back full control
+    {
+        IGreeterRule::RuleContext hotContext{ 10 };
+        auto ruleGate = CapabilityRouter<GreeterDomain>::Find<IGreeterRule>(token, hotContext);
+        REQUIRE(ruleGate);
+
+        IGreeterRule::Params rp{};
+        ruleGate(rp);
+        REQUIRE(rp.m_Priority == 10); // Back to normal without crashing
+        REQUIRE(std::string_view(rp.m_Message) == "Fallback Rule executed from HOST");
+    }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// State the plugins define (and the host does not) resolves to one object across plugins.
+// Observation is behavioural only: each copy reports, through the existing GreeterObserverNode, the address of the
+// state it resolves to. Same address means shared state, different addresses mean distinct states.
+#if defined(CRG_SHARED_STATE_A_PATH) && defined(CRG_SHARED_STATE_B_PATH) && defined(CRG_SHARED_STATE_C_PATH) && defined(CRG_SHARED_STATE_D_PATH)
+namespace {
+    inline std::vector<const IGreeterObserver*> CollectObservers() {
+        std::vector<const IGreeterObserver*> nodes;
+        GreeterObserverNode::Visit([&nodes](GreeterObserverNode& n) { nodes.push_back(&n); });
+        return nodes;
+    }
+
+    struct SharedPlugin {
+        DylibHandle                            m_Lib{ nullptr };
+        crg::plugin::PluginLoader::BootstrapFn m_Boot{ nullptr };
+        crg::plugin::PluginLoader::ShutdownFn  m_Down{ nullptr };
+        const IGreeterObserver*                m_Observer{ nullptr };
+
+        bool Open(const char* path) {
+            m_Lib = OpenDylib(path);
+            if (!m_Lib) return false;
+            m_Boot = reinterpret_cast<crg::plugin::PluginLoader::BootstrapFn>(GetSym(m_Lib, crg::plugin::PluginSymbols::Bootstrap));
+            m_Down = reinterpret_cast<crg::plugin::PluginLoader::ShutdownFn>(GetSym(m_Lib, crg::plugin::PluginSymbols::Shutdown));
+            m_Observer = nullptr;
+            return m_Boot && m_Down;
+        }
+        bool Boot(::crg::host::CRG_Context* ctx) {
+            const auto before = CollectObservers();
+            m_Boot(ctx);
+            for (const IGreeterObserver* p : CollectObservers()) {
+                if (std::find(before.begin(), before.end(), p) == before.end()) { m_Observer = p; return true; }
+            }
+            return false;
+        }
+        void Destroy() { m_Down(); CloseDylib(m_Lib); m_Lib = nullptr; m_Observer = nullptr; }
+        const void* State() const { return m_Observer->GetObserverName(); }
+    };
+
+    struct SharedHost {
+        ::crg::host::HostDescriptor m_Desc;
+        ::crg::host::CRG_Context    m_Ctx{};
+        SharedHost() {
+            m_Desc.m_HostAnchorsHead = ::crg::discovery::AnchorLink::GetLocalHead();
+            m_Ctx.m_HostDescriptor = &m_Desc;
+        }
+    };
+
+    inline int CountRecords() {
+        int n = 0;
+        ::crg::discovery::PluginRecordNode::Visit([&n](const auto&) { ++n; });
+        return n;
+    }
+}
+
+TEST_CASE("Stage plugin_loadlibrary — two plugins defining the same state anchor share one object", "[plugin_loadlibrary][shared_state]") {
+    SharedHost host;
+    SharedPlugin a, b;
+    REQUIRE(a.Open(CRG_SHARED_STATE_A_PATH));
+    REQUIRE(b.Open(CRG_SHARED_STATE_B_PATH));
+    REQUIRE(a.Boot(&host.m_Ctx));
+    REQUIRE(b.Boot(&host.m_Ctx));
+
+    const void* shared = a.State();
+    REQUIRE(b.State() == shared);
+
+    b.Destroy();                 // shutting one module down unlinks it only
+    REQUIRE(a.State() == shared);
+    a.Destroy();
+}
+
+TEST_CASE("Stage plugin_loadlibrary — the module holding the state is destroyed: the other module is unlinked, nothing points into the freed module", "[plugin_loadlibrary][shared_state]") {
+    SharedHost host;
+    SharedPlugin a, b;
+    REQUIRE(a.Open(CRG_SHARED_STATE_A_PATH));
+    REQUIRE(b.Open(CRG_SHARED_STATE_B_PATH));
+    a.Boot(&host.m_Ctx);
+    b.Boot(&host.m_Ctx);
+    const void* inA = a.State();
+    REQUIRE(b.State() == inA);
+
+    b.Destroy();   // the module that links leaves first: the other is untouched
+    REQUIRE(a.State() == inA);
+    REQUIRE(b.Open(CRG_SHARED_STATE_B_PATH));
+    b.Boot(&host.m_Ctx);
+    REQUIRE(b.State() == inA);
+
+    a.Destroy();   // the module holding the state leaves: B must not keep resolving into A
+    REQUIRE(b.State() != inA);
+    b.Destroy();
+}
+
+TEST_CASE("Stage plugin_loadlibrary — the module holding the state is reloaded: it links to the survivor", "[plugin_loadlibrary][shared_state]") {
+    SharedHost host;
+    SharedPlugin a, b;
+    REQUIRE(a.Open(CRG_SHARED_STATE_A_PATH));
+    REQUIRE(b.Open(CRG_SHARED_STATE_B_PATH));
+    a.Boot(&host.m_Ctx);
+    b.Boot(&host.m_Ctx);
+    const void* inA = a.State();
+
+    a.Destroy();
+    const void* inB = b.State();
+    REQUIRE(inB != inA);
+    SharedPlugin a2;
+    REQUIRE(a2.Open(CRG_SHARED_STATE_A_PATH));
+    a2.Boot(&host.m_Ctx);
+    REQUIRE(a2.State() == inB);
+
+    a2.Destroy();
+    b.Destroy();
+}
+
+TEST_CASE("Stage plugin_loadlibrary — the module holding the state is destroyed with several others: each leaves the freed module", "[plugin_loadlibrary][shared_state]") {
+    SharedHost host;
+    SharedPlugin a, b, c;
+    REQUIRE(a.Open(CRG_SHARED_STATE_A_PATH));
+    REQUIRE(b.Open(CRG_SHARED_STATE_B_PATH));
+    REQUIRE(c.Open(CRG_SHARED_STATE_C_PATH));
+    a.Boot(&host.m_Ctx);
+    b.Boot(&host.m_Ctx);
+    c.Boot(&host.m_Ctx);
+    const void* inA = a.State();
+    REQUIRE(b.State() == inA);
+    REQUIRE(c.State() == inA);
+
+    a.Destroy();
+    REQUIRE(b.State() != inA);   // every dependent leaves the freed module
+    REQUIRE(c.State() != inA);
+
+    b.Destroy();
+    REQUIRE(c.State() != inA);
+    c.Destroy();
+}
+
+// Reload contract: Load -> Link, Shutdown -> Unlink (real FreeLibrary), Reload -> Load -> Link. No retained state is involved.
+TEST_CASE("Reload contract R1/R2 — a lone module links on load and leaves nothing behind on unload", "[plugin_loadlibrary][shared_state][reload_contract]") {
+    SharedHost host;
+    const int before = CountRecords();
+    SharedPlugin a;
+    REQUIRE(a.Open(CRG_SHARED_STATE_A_PATH));
+    a.Boot(&host.m_Ctx);
+    REQUIRE(CountRecords() == before + 1);   // R1: the module is part of the topology
+    REQUIRE(a.State() != nullptr);
+
+    a.Destroy();                             // R2: real FreeLibrary
+    REQUIRE(CountRecords() == before);       // no record left pointing into the freed image
+
+    REQUIRE(a.Open(CRG_SHARED_STATE_A_PATH));
+    a.Boot(&host.m_Ctx);
+    REQUIRE(a.State() != nullptr);
+    a.Destroy();
+    REQUIRE(CountRecords() == before);
+}
+
+TEST_CASE("Reload contract R6 — the reloaded module links to a survivor", "[plugin_loadlibrary][shared_state][reload_contract]") {
+    SharedHost host;
+    SharedPlugin a, b, c, d;
+    REQUIRE(a.Open(CRG_SHARED_STATE_A_PATH));
+    REQUIRE(b.Open(CRG_SHARED_STATE_B_PATH));
+    REQUIRE(c.Open(CRG_SHARED_STATE_C_PATH));
+    REQUIRE(d.Open(CRG_SHARED_STATE_D_PATH));
+    a.Boot(&host.m_Ctx);
+    b.Boot(&host.m_Ctx);
+    c.Boot(&host.m_Ctx);
+    d.Boot(&host.m_Ctx);
+    const void* inA = a.State();
+    REQUIRE(b.State() == inA);
+    REQUIRE(c.State() == inA);
+    REQUIRE(d.State() == inA);
+
+    a.Destroy();
+    REQUIRE(b.State() != inA);
+    REQUIRE(c.State() != inA);
+    REQUIRE(d.State() != inA);
+    REQUIRE(a.Open(CRG_SHARED_STATE_A_PATH));
+    a.Boot(&host.m_Ctx);
+
+    const void* linked = a.State();            // the new module resolves to the state of a survivor, none inside a freed image
+    REQUIRE((linked == b.State() || linked == c.State() || linked == d.State()));
+
+    a.Destroy(); b.Destroy(); c.Destroy(); d.Destroy();
+}
+
+TEST_CASE("Reload contract R7 — reloading the linking module leaves the other untouched", "[plugin_loadlibrary][shared_state][reload_contract]") {
+    SharedHost host;
+    SharedPlugin a, b;
+    REQUIRE(a.Open(CRG_SHARED_STATE_A_PATH));
+    REQUIRE(b.Open(CRG_SHARED_STATE_B_PATH));
+    a.Boot(&host.m_Ctx);
+    b.Boot(&host.m_Ctx);
+    const void* inA = a.State();
+
+    b.Destroy();
+    REQUIRE(a.State() == inA);
+    REQUIRE(b.Open(CRG_SHARED_STATE_B_PATH));
+    b.Boot(&host.m_Ctx);
+    REQUIRE(a.State() == inA);
+    REQUIRE(b.State() == inA);
+
+    a.Destroy(); b.Destroy();
+}
+
+TEST_CASE("Reload contract R8 — repeated reloads keep the topology constant", "[plugin_loadlibrary][shared_state][reload_contract]") {
+    SharedHost host;
+    const int before = CountRecords();
+    SharedPlugin a, b;
+    REQUIRE(a.Open(CRG_SHARED_STATE_A_PATH));
+    REQUIRE(b.Open(CRG_SHARED_STATE_B_PATH));
+    a.Boot(&host.m_Ctx);
+    b.Boot(&host.m_Ctx);
+    REQUIRE(b.State() == a.State());
+    REQUIRE(CountRecords() == before + 2);
+
+    for (int i = 0; i < 4; ++i) {
+        a.Destroy();
+        REQUIRE(CountRecords() == before + 1);
+        const void* inB = b.State();
+        REQUIRE(a.Open(CRG_SHARED_STATE_A_PATH));
+        a.Boot(&host.m_Ctx);
+        REQUIRE(CountRecords() == before + 2);
+        REQUIRE(a.State() == inB);
+    }
+    a.Destroy(); b.Destroy();
+    REQUIRE(CountRecords() == before);
+}
+#endif
+
+// =============================================================================
+// A failed Splice() must not report the chain as joined. Splice() sets the remote-target redirect before it can
+// return false, so IsLinkedToHost() is true after a failed splice; IsJoined() has to follow the splice itself.
+// =============================================================================
+
+struct UnspliceableNode : public ::crg::discovery::NodeLink<UnspliceableNode, IGreeterObserver> {};
+CRG_DECLARE_NODE_LINK(UnspliceableNode)
+CRG_DEFINE_NODE_LINK(UnspliceableNode)
+
+TEST_CASE("ChainSplicer — a failed Splice() leaves the chain not joined", "[plugin_loadlibrary][splicer]") {
+    using Splicer = ::crg::discovery::internal::ChainSplicer<UnspliceableNode>;
+    using Anchor  = ::crg::discovery::NodeLinkAnchor<UnspliceableNode>;
+
+    SharedHost host;   // describes this module's own anchors: the redirect resolves, but there is no local node to splice
+
+    REQUIRE_FALSE(Splicer::Splice(host.m_Desc));
+    REQUIRE(Anchor::IsLinkedToHost());     // the redirect stays set after the failure
+    REQUIRE_FALSE(Splicer::IsJoined());    // ... but nothing was joined
+    REQUIRE_FALSE(Splicer::CanUnsplice());
+
+    Splicer::ClosePortal();
+    REQUIRE_FALSE(Anchor::IsLinkedToHost());
+    REQUIRE_FALSE(Splicer::IsJoined());
+}
+
+// =============================================================================
+// Splice order inside CRG_Bootstrap. The synchronizers of a module run in static-init order, so the plugin record chain
+// may be spliced before or after the domain chains. The result must not depend on it: after the second module boots,
+// its view of the unjoined domain (the host does not define OrderDomain) holds both modules' models, and its arena
+// build reaches both modules' populators.
+// =============================================================================
+
+CRG_DEFINE_SHARED_STATE(OrderLog)
+
+namespace {
+    using OrderBootFn = void (*)(::crg::host::CRG_Context*, int);
+    using OrderSlotFn = unsigned (*)(int);
+    using OrderSizeFn = unsigned (*)();
+
+    struct OrderPlugin {
+        DylibHandle  m_Lib{};
+        OrderBootFn  m_Boot{};
+        void       (*m_Down)(){};
+        OrderSlotFn  m_Slot{};
+        OrderSizeFn  m_Size{};
+        int        (*m_RecordSyncs)(){};
+        bool Open(const char* path) {
+            m_Lib = OpenDylib(path);
+            if (!m_Lib) return false;
+            m_Boot = reinterpret_cast<OrderBootFn>(GetSym(m_Lib, "CRG_BootstrapOrdered"));
+            m_Down = reinterpret_cast<void (*)()>(GetSym(m_Lib, "CRG_Shutdown"));
+            m_Slot = reinterpret_cast<OrderSlotFn>(GetSym(m_Lib, "CRG_OrderSlot"));
+            m_Size = reinterpret_cast<OrderSizeFn>(GetSym(m_Lib, "CRG_OrderSize"));
+            m_RecordSyncs = reinterpret_cast<int (*)()>(GetSym(m_Lib, "CRG_OrderRecordSyncs"));
+            return m_Boot && m_Down && m_Slot && m_Size && m_RecordSyncs;
+        }
+        void Destroy() { m_Down(); CloseDylib(m_Lib); m_Lib = nullptr; }
+    };
+
+    void CheckSecondModuleSeesFirst(int recordFirst) {
+        SharedHost host;
+        OrderLog& log = ::crg::discovery::GetSharedState<OrderLog>();
+        log = OrderLog{};
+
+        OrderPlugin a, b;
+        REQUIRE(a.Open(CRG_ORDER_A_PATH));
+        REQUIRE(b.Open(CRG_ORDER_B_PATH));
+
+        a.m_Boot(&host.m_Ctx, recordFirst);
+        CHECK(a.m_RecordSyncs() == 1);                     // the witness really isolates the record synchronizer
+        const int aPopulatesAfterA = log.m_Populates[0];
+        REQUIRE(aPopulatesAfterA > 0);
+
+        b.m_Boot(&host.m_Ctx, recordFirst);
+        REQUIRE(log.m_Populates[1] > 0);
+        CHECK(log.m_Populates[0] > aPopulatesAfterA);      // B's build reached A's populator
+
+        CHECK(b.m_Size() == 2u);                           // B's dense index holds A's model and its own
+        CHECK(b.m_Slot(0) != ::crg::core::InvalidDenseSlot);
+        CHECK(b.m_Slot(1) != ::crg::core::InvalidDenseSlot);
+
+        b.Destroy();
+        a.Destroy();
+    }
+}
+
+TEST_CASE("Splice order — record chain spliced first: the second module sees the first", "[plugin_loadlibrary][order]") {
+    CheckSecondModuleSeesFirst(1);
+}
+
+TEST_CASE("Splice order — record chain spliced last: the second module sees the first", "[plugin_loadlibrary][order]") {
+    CheckSecondModuleSeesFirst(0);
+}
+
+// =============================================================================
+// PluginChainSynchronizer on a chain that did not join: Splice() fails after setting the redirect (no local node), so
+// the redirect is set but nothing is joined. The domain must still be rebuilt on load (LinkStorage) and on unload
+// (UnspliceTopology), exactly once each.
+// =============================================================================
+
+struct SpliceDomain {};
+template<class TDomain>
+struct SpliceNode : public ::crg::discovery::NodeLink<SpliceNode<TDomain>, IGreeterObserver> {};
+CRG_DECLARE_NODE_LINK(SpliceNode<SpliceDomain>)
+CRG_DEFINE_NODE_LINK(SpliceNode<SpliceDomain>)
+
+namespace {
+    struct SpliceCounters { int m_Clears{}, m_Loads{}, m_Unloads{}; };
+    SpliceCounters g_Splice;
+}
+
+namespace crg::discovery {
+    template<> struct DomainSynchronizer<SpliceDomain> {
+        static void Clear() noexcept { ++g_Splice.m_Clears; }
+        static void OnPluginLoad() noexcept { ++g_Splice.m_Loads; }
+        static void OnPluginUnload() noexcept { ++g_Splice.m_Unloads; }
+    };
+}
+
+TEST_CASE("PluginChainSynchronizer — a chain whose Splice() failed is rebuilt on load and on unload", "[plugin_loadlibrary][unsplice]") {
+    static ::crg::discovery::PluginChainSynchronizer<SpliceDomain, SpliceNode> s_Sync;   // registers in the local sync chain: keep it alive
+    SharedHost host;
+    g_Splice = SpliceCounters{};
+
+    s_Sync.BindStorage(host.m_Ctx);
+    s_Sync.SpliceTopology(host.m_Ctx);
+    REQUIRE(g_Splice.m_Loads == 0);          // the splice failed: no rebuild yet
+    s_Sync.LinkStorage(host.m_Ctx);
+    CHECK(g_Splice.m_Loads == 1);            // not joined: rebuilt once the storage is linked
+
+    s_Sync.UnspliceTopology();
+    CHECK(g_Splice.m_Unloads == 1);          // the redirect was left set by the failed splice: still rebuilt on unload
+    CHECK(g_Splice.m_Clears == 0);           // nothing was spliced, so nothing to clear
+    s_Sync.UnbindStorage();
+}
+
+// =============================================================================
+// State shared by several modules: every later module resolves to the OLDEST one, never to a module that itself
+// resolves elsewhere.
+// =============================================================================
+
+TEST_CASE("Shared state — four modules all resolve to the oldest one, and the survivors re-own it when it leaves", "[plugin_loadlibrary][shared_state][linkoldest]") {
+    SharedHost host;
+    SharedPlugin a, b, c, d;
+    REQUIRE(a.Open(CRG_SHARED_STATE_A_PATH));
+    REQUIRE(b.Open(CRG_SHARED_STATE_B_PATH));
+    REQUIRE(c.Open(CRG_SHARED_STATE_C_PATH));
+    REQUIRE(d.Open(CRG_SHARED_STATE_D_PATH));
+    REQUIRE(a.Boot(&host.m_Ctx));
+    REQUIRE(b.Boot(&host.m_Ctx));
+    REQUIRE(c.Boot(&host.m_Ctx));
+    REQUIRE(d.Boot(&host.m_Ctx));
+
+    const void* inA = a.State();
+    CHECK(b.State() == inA);
+    CHECK(c.State() == inA);
+    CHECK(d.State() == inA);
+
+    a.Destroy();
+    const void* inB = b.State();
+    CHECK(inB != inA);                       // nobody keeps an address inside the freed module
+    CHECK(c.State() != inA);
+    CHECK(d.State() != inA);
+
+    SharedPlugin a2;
+    REQUIRE(a2.Open(CRG_SHARED_STATE_A_PATH));
+    REQUIRE(a2.Boot(&host.m_Ctx));
+    CHECK(a2.State() == inB);                // the reloaded module links to the oldest survivor
+
+    a2.Destroy();
+    d.Destroy();
+    c.Destroy();
+    b.Destroy();
+}
+
+// =============================================================================
+// Joined-to-host path. The host DEFINES JoinDomain (one model, one populator), so the chains of both plugin modules join
+// the host's. The plugin record chain is spliced either before or after every other synchronizer of each module; the
+// observable state must be identical: dense index contents and slot order (host view and each module's view), slot
+// validity, and which populators a build reaches, in which order.
+// =============================================================================
+
+CRG_DEFINE_DOMAIN(JoinDomain)
+CRG_DECLARE_DOMAIN_MODELS(JoinDomain, JoinHost)
+
+namespace {
+    struct HostJoinPopulator final : ::crg::discovery::DomainArenaPopulator<JoinDomain> {
+        void Populate() override {
+            auto& log = ::crg::discovery::GetSharedState<OrderLog>();
+            if (log.m_SeqCount < 16) log.m_Seq[log.m_SeqCount++] = 2;
+        }
+    };
+    const HostJoinPopulator s_HostJoinPopulator;
+
+    struct JoinPlugin {
+        DylibHandle m_Lib{};
+        OrderBootFn m_Boot{};
+        void      (*m_Down)(){};
+        OrderSlotFn m_Slot{};
+        OrderSizeFn m_Size{};
+        int       (*m_Populates)(){};
+        int       (*m_RecordSyncs)(){};
+        bool Open(const char* path) {
+            m_Lib = OpenDylib(path);
+            if (!m_Lib) return false;
+            m_Boot = reinterpret_cast<OrderBootFn>(GetSym(m_Lib, "CRG_BootstrapOrdered"));
+            m_Down = reinterpret_cast<void (*)()>(GetSym(m_Lib, "CRG_Shutdown"));
+            m_Slot = reinterpret_cast<OrderSlotFn>(GetSym(m_Lib, "CRG_JoinSlot"));
+            m_Size = reinterpret_cast<OrderSizeFn>(GetSym(m_Lib, "CRG_JoinSize"));
+            m_Populates = reinterpret_cast<int (*)()>(GetSym(m_Lib, "CRG_JoinPopulates"));
+            m_RecordSyncs = reinterpret_cast<int (*)()>(GetSym(m_Lib, "CRG_JoinRecordSyncs"));
+            return m_Boot && m_Down && m_Slot && m_Size && m_Populates && m_RecordSyncs;
+        }
+        void Destroy() { m_Down(); CloseDylib(m_Lib); m_Lib = nullptr; }
+    };
+
+    struct JoinObservation {
+        unsigned m_HostSize{};
+        unsigned m_HostSlot[3]{};          // JoinHost, JoinRole0, JoinRole1 as seen by the host
+        unsigned m_Size[2]{};              // each module's view
+        unsigned m_Slot[2][3]{};
+        int      m_Seq[16]{};              // populate order of one host-driven build
+        int      m_SeqCount{};
+        int      m_PluginPopulates[2]{};   // how many times each plugin's populator ran in that build
+        unsigned m_SizeAfterUnload{};
+        bool operator==(const JoinObservation& o) const {
+            return std::memcmp(this, &o, sizeof(*this)) == 0;
+        }
+    };
+
+    JoinObservation ObserveJoined(int recordFirst) {
+        using Store = ::crg::core::DenseIndexStore<JoinDomain>;
+        SharedHost host;
+        OrderLog& log = ::crg::discovery::GetSharedState<OrderLog>();
+        log = OrderLog{};
+
+        JoinPlugin p0, p1;
+        REQUIRE(p0.Open(CRG_JOIN_R0_PATH));
+        REQUIRE(p1.Open(CRG_JOIN_R1_PATH));
+        p0.m_Boot(&host.m_Ctx, recordFirst);
+        p1.m_Boot(&host.m_Ctx, recordFirst);
+        CHECK(p0.m_RecordSyncs() == 1);
+        CHECK(p1.m_RecordSyncs() == 1);
+
+        JoinObservation o;
+        const char* names[3] = { "JoinHost", "JoinRole0", "JoinRole1" };
+        o.m_HostSize = Store::Size();
+        for (int i = 0; i < 3; ++i) o.m_HostSlot[i] = Store::Find(::crg::hash::internal::HashString(names[i]));
+        JoinPlugin* ps[2] = { &p0, &p1 };
+        for (int m = 0; m < 2; ++m) {
+            o.m_Size[m] = ps[m]->m_Size();
+            for (int i = 0; i < 3; ++i) o.m_Slot[m][i] = ps[m]->m_Slot(i);
+        }
+
+        const int before0 = p0.m_Populates(), before1 = p1.m_Populates();
+        log.m_SeqCount = 0;
+        ::crg::discovery::DomainArenaPopulator<JoinDomain>::Chain::Build();
+        o.m_PluginPopulates[0] = p0.m_Populates() - before0;
+        o.m_PluginPopulates[1] = p1.m_Populates() - before1;
+        o.m_SeqCount = log.m_SeqCount;
+        std::memcpy(o.m_Seq, log.m_Seq, sizeof(o.m_Seq));
+
+        p1.Destroy();
+        p0.Destroy();
+        o.m_SizeAfterUnload = Store::Size();
+        return o;
+    }
+}
+
+TEST_CASE("Joined domain — the host's dense index and populators do not depend on the record-chain splice order", "[plugin_loadlibrary][order][joined]") {
+    const JoinObservation first = ObserveJoined(1);
+    const JoinObservation last  = ObserveJoined(0);
+
+    // Slot validity and content, in both orders.
+    for (const JoinObservation* o : { &first, &last }) {
+        CHECK(o->m_HostSize == 3u);
+        for (int i = 0; i < 3; ++i) CHECK(o->m_HostSlot[i] != ::crg::core::InvalidDenseSlot);
+        for (int m = 0; m < 2; ++m) {
+            CHECK(o->m_Size[m] == 3u);
+            for (int i = 0; i < 3; ++i) CHECK(o->m_Slot[m][i] == o->m_HostSlot[i]);   // every module agrees with the host
+        }
+        CHECK(o->m_PluginPopulates[0] > 0);
+        CHECK(o->m_PluginPopulates[1] > 0);
+        CHECK(o->m_SeqCount >= 3);
+        CHECK(o->m_SizeAfterUnload == 3u);                                            // append-only: slots survive an unload
+    }
+
+    // The explicit comparison between the two bootstrap orders.
+    CHECK(first.m_HostSize == last.m_HostSize);
+    for (int i = 0; i < 3; ++i) CHECK(first.m_HostSlot[i] == last.m_HostSlot[i]);
+    for (int m = 0; m < 2; ++m) {
+        CHECK(first.m_Size[m] == last.m_Size[m]);
+        for (int i = 0; i < 3; ++i) CHECK(first.m_Slot[m][i] == last.m_Slot[m][i]);
+    }
+    CHECK(first.m_SeqCount == last.m_SeqCount);
+    for (int i = 0; i < 16; ++i) CHECK(first.m_Seq[i] == last.m_Seq[i]);
+    CHECK(first.m_PluginPopulates[0] == last.m_PluginPopulates[0]);
+    CHECK(first.m_PluginPopulates[1] == last.m_PluginPopulates[1]);
+    CHECK(first.m_SizeAfterUnload == last.m_SizeAfterUnload);
+}
+
+// =============================================================================
+// Chain shared by plugins only. The plugins define the chain of PeerNode, the host does not: the modules must still
+// see one another's nodes, and a module that leaves must take only its own nodes with it.
+// =============================================================================
+
+#if defined(CRG_PEER_A_PATH) && defined(CRG_PEER_B_PATH) && defined(CRG_PEER_C_PATH)
+namespace {
+    struct PeerHost {
+        ::crg::host::HostDescriptor m_Desc;
+        ::crg::host::CRG_Context    m_Ctx{};
+        PeerHost() {
+            m_Desc.m_HostAnchorsHead = ::crg::discovery::AnchorLink::GetLocalHead();
+            m_Ctx.m_HostDescriptor = &m_Desc;
+        }
+    };
+
+    struct PeerPlugin {
+        using ProbeFn = int (*)();
+        DylibHandle                            m_Lib{ nullptr };
+        crg::plugin::PluginLoader::BootstrapFn m_Boot{ nullptr };
+        crg::plugin::PluginLoader::ShutdownFn  m_Down{ nullptr };
+        ProbeFn                                m_Count{ nullptr };
+        ProbeFn                                m_Mask{ nullptr };
+
+        bool Open(const char* path) {
+            m_Lib = OpenDylib(path);
+            if (!m_Lib) return false;
+            m_Boot  = reinterpret_cast<crg::plugin::PluginLoader::BootstrapFn>(GetSym(m_Lib, crg::plugin::PluginSymbols::Bootstrap));
+            m_Down  = reinterpret_cast<crg::plugin::PluginLoader::ShutdownFn>(GetSym(m_Lib, crg::plugin::PluginSymbols::Shutdown));
+            m_Count = reinterpret_cast<ProbeFn>(GetSym(m_Lib, "CRG_PeerCount"));
+            m_Mask  = reinterpret_cast<ProbeFn>(GetSym(m_Lib, "CRG_PeerMask"));
+            return m_Boot && m_Down && m_Count && m_Mask;
+        }
+        void Boot(::crg::host::CRG_Context* ctx) { m_Boot(ctx); }
+        void Destroy() { m_Down(); CloseDylib(m_Lib); m_Lib = nullptr; }
+        int  Count() const { return m_Count(); }
+        int  Mask() const { return m_Mask(); }
+    };
+
+    constexpr int PeerA = 1;
+    constexpr int PeerB = 2;
+    constexpr int PeerC = 4;
+}
+
+TEST_CASE("Peer chain — two plugins defining a chain the host does not define see each other's nodes", "[plugin_loadlibrary][peer_chain]") {
+    PeerHost host;
+    PeerPlugin a, b;
+    REQUIRE(a.Open(CRG_PEER_A_PATH));
+    REQUIRE(b.Open(CRG_PEER_B_PATH));
+
+    a.Boot(&host.m_Ctx);
+    CHECK(a.Mask() == PeerA);
+
+    b.Boot(&host.m_Ctx);
+    CHECK(a.Mask() == (PeerA | PeerB));
+    CHECK(b.Mask() == (PeerA | PeerB));
+    CHECK(a.Count() == 2);
+    CHECK(b.Count() == 2);
+
+    b.Destroy();
+    a.Destroy();
+}
+
+TEST_CASE("Peer chain — the module that joined leaves first: the other keeps only its own node", "[plugin_loadlibrary][peer_chain]") {
+    PeerHost host;
+    PeerPlugin a, b;
+    REQUIRE(a.Open(CRG_PEER_A_PATH));
+    REQUIRE(b.Open(CRG_PEER_B_PATH));
+    a.Boot(&host.m_Ctx);
+    b.Boot(&host.m_Ctx);
+
+    b.Destroy();
+    CHECK(a.Mask() == PeerA);
+    CHECK(a.Count() == 1);
+    a.Destroy();
+}
+
+TEST_CASE("Peer chain — the module holding the chain leaves first: the other keeps its own node and nothing of the freed one", "[plugin_loadlibrary][peer_chain]") {
+    PeerHost host;
+    PeerPlugin a, b;
+    REQUIRE(a.Open(CRG_PEER_A_PATH));
+    REQUIRE(b.Open(CRG_PEER_B_PATH));
+    a.Boot(&host.m_Ctx);
+    b.Boot(&host.m_Ctx);
+    REQUIRE(b.Mask() == (PeerA | PeerB));
+
+    a.Destroy();
+    CHECK(b.Mask() == PeerB);
+    CHECK(b.Count() == 1);
+    b.Destroy();
+}
+
+TEST_CASE("Peer chain — three modules, the middle one leaves: the others still see each other", "[plugin_loadlibrary][peer_chain]") {
+    PeerHost host;
+    PeerPlugin a, b, c;
+    REQUIRE(a.Open(CRG_PEER_A_PATH));
+    REQUIRE(b.Open(CRG_PEER_B_PATH));
+    REQUIRE(c.Open(CRG_PEER_C_PATH));
+    a.Boot(&host.m_Ctx);
+    b.Boot(&host.m_Ctx);
+    c.Boot(&host.m_Ctx);
+    CHECK(a.Mask() == (PeerA | PeerB | PeerC));
+    CHECK(b.Mask() == (PeerA | PeerB | PeerC));
+    CHECK(c.Mask() == (PeerA | PeerB | PeerC));
+
+    b.Destroy();
+    CHECK(a.Mask() == (PeerA | PeerC));
+    CHECK(c.Mask() == (PeerA | PeerC));
+
+    c.Destroy();
+    CHECK(a.Mask() == PeerA);
+    a.Destroy();
+}
+
+TEST_CASE("Peer chain — the holder leaves with several others loaded, then a reloaded module links to the oldest survivor", "[plugin_loadlibrary][peer_chain]") {
+    PeerHost host;
+    PeerPlugin a, b, c;
+    REQUIRE(a.Open(CRG_PEER_A_PATH));
+    REQUIRE(b.Open(CRG_PEER_B_PATH));
+    REQUIRE(c.Open(CRG_PEER_C_PATH));
+    a.Boot(&host.m_Ctx);
+    b.Boot(&host.m_Ctx);
+    c.Boot(&host.m_Ctx);
+
+    a.Destroy();
+    CHECK(b.Mask() == PeerB);
+    CHECK(c.Mask() == PeerC);
+
+    PeerPlugin a2;
+    REQUIRE(a2.Open(CRG_PEER_A_PATH));
+    a2.Boot(&host.m_Ctx);
+    CHECK(a2.Mask() == (PeerA | PeerB));
+    CHECK(b.Mask() == (PeerA | PeerB));
+
+    a2.Destroy();
+    CHECK(b.Mask() == PeerB);
+    c.Destroy();
+    b.Destroy();
+}
+#endif
+
+// =============================================================================
+// Domain defined by plugins only. Plugin A defines the domain, B contributes a capability to it, C consumes it. The host
+// defines no domain: registration, discovery and routing happen between the modules.
+// =============================================================================
+
+#if defined(CRG_DOMAIN_A_PATH) && defined(CRG_DOMAIN_B_PATH) && defined(CRG_DOMAIN_C_PATH)
+namespace {
+    struct DomainPlugin {
+        using CallFn = int (*)();
+        DylibHandle                            m_Lib{ nullptr };
+        crg::plugin::PluginLoader::BootstrapFn m_Boot{ nullptr };
+        crg::plugin::PluginLoader::ShutdownFn  m_Down{ nullptr };
+        CallFn                                 m_Call{ nullptr };
+
+        bool Open(const char* path) {
+            m_Lib = OpenDylib(path);
+            if (!m_Lib) return false;
+            m_Boot = reinterpret_cast<crg::plugin::PluginLoader::BootstrapFn>(GetSym(m_Lib, crg::plugin::PluginSymbols::Bootstrap));
+            m_Down = reinterpret_cast<crg::plugin::PluginLoader::ShutdownFn>(GetSym(m_Lib, crg::plugin::PluginSymbols::Shutdown));
+            m_Call = reinterpret_cast<CallFn>(GetSym(m_Lib, "CRG_DomainCall"));
+            return m_Boot && m_Down && m_Call;
+        }
+        void Boot(::crg::host::CRG_Context* ctx) { m_Boot(ctx); }
+        void Destroy() { m_Down(); CloseDylib(m_Lib); m_Lib = nullptr; }
+        int  Call() const { return m_Call(); }
+    };
+
+    constexpr int NoModel = -1;
+    constexpr int NoCapability = -2;
+}
+
+TEST_CASE("Plugin domain — definer, contributor and consumer loaded in order: the consumer routes to the contribution", "[plugin_loadlibrary][peer_domain]") {
+    PeerHost host;
+    DomainPlugin a, b, c;
+    REQUIRE(a.Open(CRG_DOMAIN_A_PATH));
+    REQUIRE(b.Open(CRG_DOMAIN_B_PATH));
+    REQUIRE(c.Open(CRG_DOMAIN_C_PATH));
+
+    a.Boot(&host.m_Ctx);
+    CHECK(a.Call() == NoCapability);
+    b.Boot(&host.m_Ctx);
+    c.Boot(&host.m_Ctx);
+
+    CHECK(c.Call() == 10);
+    CHECK(a.Call() == 10);
+    CHECK(b.Call() == 10);
+
+    c.Destroy();
+    b.Destroy();
+    a.Destroy();
+}
+
+TEST_CASE("Plugin domain — the consumer is loaded before the contributor", "[plugin_loadlibrary][peer_domain]") {
+    PeerHost host;
+    DomainPlugin a, b, c;
+    REQUIRE(a.Open(CRG_DOMAIN_A_PATH));
+    REQUIRE(b.Open(CRG_DOMAIN_B_PATH));
+    REQUIRE(c.Open(CRG_DOMAIN_C_PATH));
+
+    a.Boot(&host.m_Ctx);
+    c.Boot(&host.m_Ctx);
+    CHECK(c.Call() == NoCapability);
+    b.Boot(&host.m_Ctx);
+    CHECK(c.Call() == 10);
+
+    b.Destroy();
+    c.Destroy();
+    a.Destroy();
+}
+
+TEST_CASE("Plugin domain — the contributor unloads and reloads", "[plugin_loadlibrary][peer_domain]") {
+    PeerHost host;
+    DomainPlugin a, b, c;
+    REQUIRE(a.Open(CRG_DOMAIN_A_PATH));
+    REQUIRE(b.Open(CRG_DOMAIN_B_PATH));
+    REQUIRE(c.Open(CRG_DOMAIN_C_PATH));
+    a.Boot(&host.m_Ctx);
+    b.Boot(&host.m_Ctx);
+    c.Boot(&host.m_Ctx);
+    REQUIRE(c.Call() == 10);
+
+    b.Destroy();
+    CHECK(c.Call() == NoCapability);
+    CHECK(a.Call() == NoCapability);
+
+    DomainPlugin b2;
+    REQUIRE(b2.Open(CRG_DOMAIN_B_PATH));
+    b2.Boot(&host.m_Ctx);
+    CHECK(c.Call() == 10);
+    CHECK(a.Call() == 10);
+
+    b2.Destroy();
+    c.Destroy();
+    a.Destroy();
+}
+
+TEST_CASE("Plugin domain — the plugin that defined the domain first unloads: the others keep working", "[plugin_loadlibrary][peer_domain][!mayfail]") {
+    PeerHost host;
+    DomainPlugin a, b, c;
+    REQUIRE(a.Open(CRG_DOMAIN_A_PATH));
+    REQUIRE(b.Open(CRG_DOMAIN_B_PATH));
+    REQUIRE(c.Open(CRG_DOMAIN_C_PATH));
+    a.Boot(&host.m_Ctx);
+    b.Boot(&host.m_Ctx);
+    c.Boot(&host.m_Ctx);
+    REQUIRE(c.Call() == 10);
+
+    a.Destroy();
+    CHECK(b.Call() == 10);
+    CHECK(c.Call() == 10);
+
+    c.Destroy();
+    b.Destroy();
+}
+
+TEST_CASE("Plugin domain — the oldest loaded module is the contributor and the definer unloads: the consumer keeps routing", "[plugin_loadlibrary][peer_domain]") {
+    PeerHost host;
+    DomainPlugin a, b, c;
+    REQUIRE(a.Open(CRG_DOMAIN_A_PATH));
+    REQUIRE(b.Open(CRG_DOMAIN_B_PATH));
+    REQUIRE(c.Open(CRG_DOMAIN_C_PATH));
+    b.Boot(&host.m_Ctx);
+    a.Boot(&host.m_Ctx);
+    c.Boot(&host.m_Ctx);
+    REQUIRE(c.Call() == 10);
+
+    a.Destroy();
+    CHECK(b.Call() == 10);
+    CHECK(c.Call() == 10);
+
+    c.Destroy();
+    b.Destroy();
+}
+#endif
